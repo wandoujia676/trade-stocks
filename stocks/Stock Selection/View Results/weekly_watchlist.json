@@ -1,0 +1,103 @@
+[
+  {
+    "code": "603259",
+    "rating": "B+",
+    "signal": "买入",
+    "score": 72.5,
+    "price": 103.81,
+    "change": 5.8206,
+    "selected_at": "2026-04-02 00:59:00",
+    "reasons": [
+      "均线多头排列",
+      "放量上涨",
+      "突破新高"
+    ]
+  },
+  {
+    "code": "601398",
+    "rating": "B+",
+    "signal": "买入",
+    "score": 70.2,
+    "price": 7.58,
+    "change": -0.7853,
+    "selected_at": "2026-04-02 00:59:00",
+    "reasons": [
+      "均线多头排列",
+      "突破新高"
+    ]
+  },
+  {
+    "code": "600036",
+    "rating": "B+",
+    "signal": "持有/加仓",
+    "score": 68.4,
+    "price": 39.82,
+    "change": 1.2716,
+    "selected_at": "2026-04-02 00:59:00",
+    "reasons": [
+      "均线多头",
+      "MACD强势"
+    ]
+  },
+  {
+    "code": "000001",
+    "rating": "B+",
+    "signal": "持有/加仓",
+    "score": 68.2,
+    "price": 11.15,
+    "change": 0.6318,
+    "selected_at": "2026-04-02 00:59:00",
+    "reasons": [
+      "均线多头",
+      "MACD强势"
+    ]
+  },
+  {
+    "code": "601166",
+    "rating": "B+",
+    "signal": "持有/加仓",
+    "score": 65.5,
+    "price": 18.91,
+    "change": 0.4782,
+    "selected_at": "2026-04-02 00:59:00",
+    "reasons": [
+      "均线多头"
+    ]
+  },
+  {
+    "code": "600276",
+    "rating": "B",
+    "signal": "持有/加仓",
+    "score": 61.4,
+    "price": 57.73,
+    "change": 4.5455,
+    "selected_at": "2026-04-02 00:59:00",
+    "reasons": [
+      "均线多头"
+    ]
+  },
+  {
+    "code": "000776",
+    "rating": "B",
+    "signal": "持有/加仓",
+    "score": 56.8,
+    "price": 18.43,
+    "change": 2.6169000000000002,
+    "selected_at": "2026-04-02 00:59:00",
+    "reasons": [
+      "综合评分56.8分，趋势待确认"
+    ]
+  },
+  {
+    "code": "000858",
+    "rating": "B",
+    "signal": "持有/加仓",
+    "score": 56.1,
+    "price": 104.39,
+    "change": 1.0845,
+    "selected_at": "2026-04-02 00:59:00",
+    "reasons": [
+      "均线多头"
+    ]
+  }
+]

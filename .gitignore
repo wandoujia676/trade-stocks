@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Data
+*.db
+*.sqlite
+
+# Logs
+*.log
+
+# Claude
+.claude/
+
+# Temp/accidental files
+stocks/=0.8.8
+
+# OS
+.DS_Store
+Thumbs.db

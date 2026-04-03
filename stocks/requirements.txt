@@ -1,0 +1,8 @@
+# 股票分析系统依赖
+tushare>=1.4.0
+akshare>=1.14.0
+baostock>=0.8.8
+pandas>=2.0.0
+numpy>=1.24.0
+requests>=2.31.0
+# sqlite-cache 已内置，无需额外安装

@@ -1,0 +1,686 @@
+{
+  "verifications": [
+    {
+      "date": "2026-04-01",
+      "picks_date": "2026-04-01",
+      "stocks": [
+        {
+          "code": "603288",
+          "name": "",
+          "score": 71.5,
+          "signal": "买入",
+          "pick_price": 41.0,
+          "today_price": 41.0,
+          "change_pct": 1.6360932077342503,
+          "result": "成功",
+          "reason": "延续原有趋势",
+          "dimensions": [
+            "趋势",
+            "量价",
+            "形态"
+          ],
+          "pick_reasons": [
+            "均线多头排列",
+            "放量上涨",
+            "突破新高"
+          ]
+        },
+        {
+          "code": "603259",
+          "name": "",
+          "score": 69.5,
+          "signal": "持有/加仓",
+          "pick_price": 98.1,
+          "today_price": 98.1,
+          "change_pct": 1.5422834075147447,
+          "result": "成功",
+          "reason": "延续原有趋势",
+          "dimensions": [
+            "趋势",
+            "动量"
+          ],
+          "pick_reasons": [
+            "均线多头",
+            "MACD强势"
+          ]
+        },
+        {
+          "code": "601328",
+          "name": "",
+          "score": 68.5,
+          "signal": "持有/加仓",
+          "pick_price": 7.0,
+          "today_price": 7.0,
+          "change_pct": 0.43041606886657463,
+          "result": "成功",
+          "reason": "延续原有趋势",
+          "dimensions": [
+            "趋势",
+            "动量"
+          ],
+          "pick_reasons": [
+            "均线多头",
+            "MACD强势"
+          ]
+        },
+        {
+          "code": "601398",
+          "name": "",
+          "score": 68.0,
+          "signal": "持有/加仓",
+          "pick_price": 7.64,
+          "today_price": 7.64,
+          "change_pct": 0.9247027741083143,
+          "result": "成功",
+          "reason": "延续原有趋势",
+          "dimensions": [
+            "趋势",
+            "动量"
+          ],
+          "pick_reasons": [
+            "均线多头",
+            "MACD强势"
+          ]
+        },
+        {
+          "code": "000001",
+          "name": "",
+          "score": 67.0,
+          "signal": "持有/加仓",
+          "pick_price": 11.08,
+          "today_price": 11.08,
+          "change_pct": 0.8189262966333016,
+          "result": "成功",
+          "reason": "量比放大(1.8)",
+          "dimensions": [
+            "趋势",
+            "动量"
+          ],
+          "pick_reasons": [
+            "均线多头",
+            "MACD强势"
+          ]
+        },
+        {
+          "code": "601166",
+          "name": "",
+          "score": 64.5,
+          "signal": "持有/加仓",
+          "pick_price": 18.82,
+          "today_price": 18.82,
+          "change_pct": 0.6955591225254093,
+          "result": "成功",
+          "reason": "延续原有趋势",
+          "dimensions": [
+            "趋势"
+          ],
+          "pick_reasons": [
+            "均线多头"
+          ]
+        },
+        {
+          "code": "601288",
+          "name": "",
+          "score": 60.2,
+          "signal": "持有/加仓",
+          "pick_price": 6.7,
+          "today_price": 6.7,
+          "change_pct": 3.235747303543913,
+          "result": "成功",
+          "reason": "涨幅较大(+3.24%), 量比放大(3.0)",
+          "dimensions": [
+            "量价"
+          ],
+          "pick_reasons": [
+            "量价配合好"
+          ]
+        }
+      ]
+    },
+    {
+      "date": "2026-04-03",
+      "picks_date": "2026-04-02 19:49:10",
+      "stocks": [
+        {
+          "code": "000008",
+          "name": "",
+          "score": 82.7,
+          "signal": "持有/加仓",
+          "pick_price": 3.12,
+          "today_price": 2.81,
+          "change_pct": -9.935897435897436,
+          "result": "失败",
+          "reason": "量比萎缩(0.8), 跌幅较大(-9.94%)",
+          "dimensions": [
+            "趋势",
+            "动量",
+            "情绪"
+          ],
+          "pick_reasons": [
+            "均线多头排列",
+            "动量强势",
+            "市场情绪积极"
+          ]
+        },
+        {
+          "code": "600487",
+          "name": "",
+          "score": 81.6,
+          "signal": "加仓",
+          "pick_price": 53.39,
+          "today_price": 58.05,
+          "change_pct": 8.72822625959917,
+          "result": "成功",
+          "reason": "涨幅较大(+8.73%), 价格持续上涨(+8.73%)",
+          "dimensions": [
+            "趋势",
+            "动量",
+            "情绪"
+          ],
+          "pick_reasons": [
+            "均线多头排列",
+            "动量强势",
+            "形态良好",
+            "市场情绪积极"
+          ]
+        },
+        {
+          "code": "300900",
+          "name": "",
+          "score": 80.7,
+          "signal": "持有/加仓",
+          "pick_price": 40.2,
+          "today_price": 37.11,
+          "change_pct": -7.686567164179113,
+          "result": "失败",
+          "reason": "跌幅较大(-7.69%)",
+          "dimensions": [
+            "趋势",
+            "情绪"
+          ],
+          "pick_reasons": [
+            "均线多头排列",
+            "市场情绪积极"
+          ]
+        },
+        {
+          "code": "301153",
+          "name": "",
+          "score": 80.2,
+          "signal": "加仓",
+          "pick_price": 24.03,
+          "today_price": 23.86,
+          "change_pct": -0.7074490220557706,
+          "result": "失败",
+          "reason": "市场轮动影响",
+          "dimensions": [
+            "趋势",
+            "动量",
+            "量价",
+            "情绪"
+          ],
+          "pick_reasons": [
+            "均线多头排列",
+            "动量强势",
+            "量价配合良好",
+            "市场情绪积极"
+          ]
+        },
+        {
+          "code": "301396",
+          "name": "",
+          "score": 79.3,
+          "signal": "加仓",
+          "pick_price": 172.19,
+          "today_price": 166.5,
+          "change_pct": -3.3044892270166666,
+          "result": "失败",
+          "reason": "跌幅较大(-3.30%)",
+          "dimensions": [
+            "趋势",
+            "动量",
+            "情绪"
+          ],
+          "pick_reasons": [
+            "均线多头排列",
+            "动量强势",
+            "市场情绪积极"
+          ]
+        },
+        {
+          "code": "300692",
+          "name": "",
+          "score": 79.1,
+          "signal": "买入",
+          "pick_price": 8.63,
+          "today_price": 8.23,
+          "change_pct": -4.634994206257246,
+          "result": "失败",
+          "reason": "量比萎缩(0.6), 跌幅较大(-4.63%)",
+          "dimensions": [
+            "趋势",
+            "量价",
+            "情绪"
+          ],
+          "pick_reasons": [
+            "均线多头排列",
+            "量价配合良好",
+            "形态良好",
+            "市场情绪积极"
+          ]
+        },
+        {
+          "code": "003018",
+          "name": "",
+          "score": 78.4,
+          "signal": "加仓",
+          "pick_price": 30.51,
+          "today_price": 29.13,
+          "change_pct": -4.523107177974443,
+          "result": "失败",
+          "reason": "跌幅较大(-4.52%)",
+          "dimensions": [
+            "趋势",
+            "动量",
+            "情绪"
+          ],
+          "pick_reasons": [
+            "均线多头排列",
+            "动量强势",
+            "市场情绪积极"
+          ]
+        },
+        {
+          "code": "600851",
+          "name": "",
+          "score": 77.5,
+          "signal": "加仓",
+          "pick_price": 8.62,
+          "today_price": 8.44,
+          "change_pct": -2.088167053364266,
+          "result": "失败",
+          "reason": "量比萎缩(0.7), 跌幅较大(-2.09%)",
+          "dimensions": [
+            "趋势",
+            "动量",
+            "情绪"
+          ],
+          "pick_reasons": [
+            "均线多头排列",
+            "动量强势",
+            "市场情绪积极"
+          ]
+        },
+        {
+          "code": "002597",
+          "name": "",
+          "score": 75.9,
+          "signal": "加仓",
+          "pick_price": 24.43,
+          "today_price": 22.8,
+          "change_pct": -6.6721244371674135,
+          "result": "失败",
+          "reason": "量比萎缩(0.7), 跌幅较大(-6.67%)",
+          "dimensions": [
+            "趋势",
+            "动量"
+          ],
+          "pick_reasons": [
+            "均线多头排列",
+            "动量强势"
+          ]
+        },
+        {
+          "code": "300158",
+          "name": "",
+          "score": 75.5,
+          "signal": "加仓",
+          "pick_price": 6.46,
+          "today_price": 6.16,
+          "change_pct": -4.643962848297211,
+          "result": "失败",
+          "reason": "量比萎缩(0.7), 跌幅较大(-4.64%)",
+          "dimensions": [
+            "趋势",
+            "动量",
+            "量价"
+          ],
+          "pick_reasons": [
+            "均线多头排列",
+            "动量强势",
+            "量价配合良好",
+            "形态良好"
+          ]
+        },
+        {
+          "code": "002166",
+          "name": "",
+          "score": 75.2,
+          "signal": "加仓",
+          "pick_price": 9.4,
+          "today_price": 9.04,
+          "change_pct": -3.829787234042566,
+          "result": "失败",
+          "reason": "量比萎缩(0.7), 跌幅较大(-3.83%)",
+          "dimensions": [
+            "趋势",
+            "动量",
+            "情绪"
+          ],
+          "pick_reasons": [
+            "均线多头排列",
+            "动量强势",
+            "形态良好",
+            "市场情绪积极"
+          ]
+        },
+        {
+          "code": "000989",
+          "name": "",
+          "score": 75.0,
+          "signal": "加仓",
+          "pick_price": 9.71,
+          "today_price": 9.47,
+          "change_pct": -2.4716786817713716,
+          "result": "失败",
+          "reason": "量比萎缩(0.8), 跌幅较大(-2.47%)",
+          "dimensions": [
+            "趋势",
+            "动量",
+            "情绪"
+          ],
+          "pick_reasons": [
+            "均线多头排列",
+            "动量强势",
+            "形态良好",
+            "市场情绪积极"
+          ]
+        },
+        {
+          "code": "300009",
+          "name": "",
+          "score": 75.0,
+          "signal": "买入",
+          "pick_price": 9.92,
+          "today_price": 9.77,
+          "change_pct": -1.5120967741935518,
+          "result": "失败",
+          "reason": "量比萎缩(0.7)",
+          "dimensions": [
+            "趋势",
+            "量价",
+            "情绪"
+          ],
+          "pick_reasons": [
+            "均线多头排列",
+            "量价配合良好",
+            "形态良好",
+            "市场情绪积极"
+          ]
+        },
+        {
+          "code": "002072",
+          "name": "",
+          "score": 73.6,
+          "signal": "持有/加仓",
+          "pick_price": 7.68,
+          "today_price": 7.38,
+          "change_pct": -3.906249999999998,
+          "result": "失败",
+          "reason": "量比萎缩(0.7), 跌幅较大(-3.91%)",
+          "dimensions": [
+            "趋势",
+            "情绪"
+          ],
+          "pick_reasons": [
+            "均线多头排列",
+            "形态良好",
+            "市场情绪积极"
+          ]
+        },
+        {
+          "code": "601288",
+          "name": "",
+          "score": 73.6,
+          "signal": "持有/加仓",
+          "pick_price": 6.92,
+          "today_price": 6.84,
+          "change_pct": -1.1560693641618507,
+          "result": "失败",
+          "reason": "量比萎缩(0.6)",
+          "dimensions": [
+            "趋势",
+            "量价"
+          ],
+          "pick_reasons": [
+            "均线多头排列",
+            "量价配合良好",
+            "形态良好"
+          ]
+        },
+        {
+          "code": "002645",
+          "name": "",
+          "score": 73.6,
+          "signal": "加仓",
+          "pick_price": 18.01,
+          "today_price": 17.7,
+          "change_pct": -1.7212659633537046,
+          "result": "失败",
+          "reason": "量比萎缩(0.5)",
+          "dimensions": [
+            "趋势",
+            "动量",
+            "情绪"
+          ],
+          "pick_reasons": [
+            "均线多头排列",
+            "动量强势",
+            "形态良好",
+            "市场情绪积极"
+          ]
+        },
+        {
+          "code": "300620",
+          "name": "",
+          "score": 71.6,
+          "signal": "加仓",
+          "pick_price": 200.07,
+          "today_price": 222.96,
+          "change_pct": 11.440995651521975,
+          "result": "成功",
+          "reason": "涨幅较大(+11.44%), 价格持续上涨(+11.44%)",
+          "dimensions": [
+            "趋势",
+            "动量",
+            "情绪"
+          ],
+          "pick_reasons": [
+            "均线多头排列",
+            "动量强势",
+            "形态良好",
+            "市场情绪积极"
+          ]
+        },
+        {
+          "code": "600126",
+          "name": "",
+          "score": 71.4,
+          "signal": "持有/加仓",
+          "pick_price": 8.72,
+          "today_price": 8.59,
+          "change_pct": -1.4908256880734034,
+          "result": "失败",
+          "reason": "量比萎缩(0.8)",
+          "dimensions": [
+            "趋势",
+            "动量",
+            "情绪"
+          ],
+          "pick_reasons": [
+            "均线多头排列",
+            "动量强势",
+            "市场情绪积极"
+          ]
+        },
+        {
+          "code": "601825",
+          "name": "",
+          "score": 71.1,
+          "signal": "加仓",
+          "pick_price": 9.25,
+          "today_price": 9.15,
+          "change_pct": -1.0810810810810774,
+          "result": "失败",
+          "reason": "市场轮动影响",
+          "dimensions": [
+            "趋势",
+            "动量",
+            "情绪"
+          ],
+          "pick_reasons": [
+            "均线多头排列",
+            "动量强势",
+            "市场情绪积极"
+          ]
+        },
+        {
+          "code": "002653",
+          "name": "",
+          "score": 71.1,
+          "signal": "加仓",
+          "pick_price": 57.85,
+          "today_price": 55.34,
+          "change_pct": -4.338807260155572,
+          "result": "失败",
+          "reason": "跌幅较大(-4.34%)",
+          "dimensions": [
+            "趋势",
+            "情绪"
+          ],
+          "pick_reasons": [
+            "均线多头排列",
+            "形态良好",
+            "市场情绪积极"
+          ]
+        }
+      ]
+    },
+    {
+      "date": "2026-04-03",
+      "picks_date": "2026-04-02 19:49:10",
+      "stocks": [
+        {
+          "code": "600487",
+          "name": "",
+          "score": 81.6,
+          "signal": "加仓",
+          "pick_price": 53.39,
+          "today_price": 58.05,
+          "change_pct": 8.72822625959917,
+          "result": "成功",
+          "reason": "涨幅较大(+8.73%), 价格持续上涨(+8.73%)",
+          "dimensions": [
+            "趋势",
+            "动量",
+            "情绪"
+          ],
+          "pick_reasons": [
+            "均线多头排列",
+            "动量强势",
+            "形态良好",
+            "市场情绪积极"
+          ]
+        },
+        {
+          "code": "301153",
+          "name": "",
+          "score": 80.2,
+          "signal": "加仓",
+          "pick_price": 24.03,
+          "today_price": 23.86,
+          "change_pct": -0.7074490220557706,
+          "result": "失败",
+          "reason": "市场轮动影响",
+          "dimensions": [
+            "趋势",
+            "动量",
+            "量价",
+            "情绪"
+          ],
+          "pick_reasons": [
+            "均线多头排列",
+            "动量强势",
+            "量价配合良好",
+            "市场情绪积极"
+          ]
+        },
+        {
+          "code": "301396",
+          "name": "",
+          "score": 79.3,
+          "signal": "加仓",
+          "pick_price": 172.19,
+          "today_price": 166.5,
+          "change_pct": -3.3044892270166666,
+          "result": "失败",
+          "reason": "跌幅较大(-3.30%)",
+          "dimensions": [
+            "趋势",
+            "动量",
+            "情绪"
+          ],
+          "pick_reasons": [
+            "均线多头排列",
+            "动量强势",
+            "市场情绪积极"
+          ]
+        },
+        {
+          "code": "300692",
+          "name": "",
+          "score": 79.1,
+          "signal": "买入",
+          "pick_price": 8.63,
+          "today_price": 8.23,
+          "change_pct": -4.634994206257246,
+          "result": "失败",
+          "reason": "量比萎缩(0.6), 跌幅较大(-4.63%)",
+          "dimensions": [
+            "趋势",
+            "量价",
+            "情绪"
+          ],
+          "pick_reasons": [
+            "均线多头排列",
+            "量价配合良好",
+            "形态良好",
+            "市场情绪积极"
+          ]
+        },
+        {
+          "code": "003018",
+          "name": "",
+          "score": 78.4,
+          "signal": "加仓",
+          "pick_price": 30.51,
+          "today_price": 29.13,
+          "change_pct": -4.523107177974443,
+          "result": "失败",
+          "reason": "跌幅较大(-4.52%)",
+          "dimensions": [
+            "趋势",
+            "动量",
+            "情绪"
+          ],
+          "pick_reasons": [
+            "均线多头排列",
+            "动量强势",
+            "市场情绪积极"
+          ]
+        }
+      ]
+    }
+  ],
+  "dimension_stats": {}
+}

@@ -1,0 +1,126 @@
+# 股票智能分析系统 - 斜杠命令
+
+## 选股命令
+
+```
+/stock screener [数量=20]  - 综合战法筛选自选股
+```
+执行: `python "Stock Selection/cli.py" screener --market 全市场 --limit 20`
+
+---
+
+## 分析命令
+
+```
+/stock analyze <代码>  - 6维度综合战法分析
+```
+执行: `python "Stock Selection/cli.py" analyze <股票代码>`
+
+示例: `/stock analyze 603288`
+
+---
+
+## 自选股管理
+
+```
+/stock add <代码>     - 添加股票到自选列表
+/stock remove <代码>  - 从自选列表移除
+/stock list           - 查看自选列表
+```
+执行:
+- `python "Stock Selection/cli.py" monitor add <代码>`
+- `python "Stock Selection/cli.py" monitor remove <代码>`
+- `python "Stock Selection/cli.py" monitor list`
+
+---
+
+## 监控命令
+
+```
+/stock check   - 检查所有自选股信号
+/stock alerts  - 查看未读提醒
+```
+执行:
+- `python "Stock Selection/cli.py" monitor check`
+- `python "Stock Selection/cli.py" monitor alerts`
+
+---
+
+## 查看命令
+
+```
+/stock weekly  - 查看本周自选股
+```
+执行: 读取 `Stock Selection/View Results/weekly_watchlist.txt` 文件
+
+---
+
+## 手动脚本执行
+
+### 自动选股（每周三14:00自动执行）
+```bash
+python "Stock Selection/auto_screener.py"
+```
+
+### 更新候选股票池（每月15号和28号14:00执行）
+```bash
+python "Stock Selection/auto_candidate_pool.py"
+```
+
+---
+
+## 输出文件说明
+
+所有文件保存在 `Stock Selection/View Results/` 文件夹：
+
+| 文件 | 说明 |
+|------|------|
+| weekly_watchlist.txt | 本周自选股列表（代码+名称） |
+| monthly_watchlist.txt | 候选股票池（约100只） |
+| 选股.txt | JSON格式完整数据 |
+| 选股.报告.txt | 可读报告格式 |
+| weekly_watchlist.json | JSON周报 |
+| monthly_candidate_pool.json | 候选池JSON备份 |
+
+---
+
+## 综合战法（6维度评估）
+
+| 维度 | 权重 | 说明 |
+|------|------|------|
+| 趋势 | 25% | 均线多头排列、上升趋势 |
+| 动量 | 20% | MACD、KDJ、RSI |
+| 量价 | 20% | 放量上涨、量比 |
+| 形态 | 15% | 锤子线、突破前期高点 |
+| 位置 | 10% | BOLL位置、相对位置 |
+| 情绪 | 10% | 涨停基因、短期强度 |
+
+---
+
+## 信号评级
+
+| 评分 | 评级 | 信号 |
+|------|------|------|
+| ≥80 | A | 强势 |
+| 65-79 | B+ | 较好 |
+| 50-64 | B | 一般 |
+| 35-49 | C | 较弱 |
+| <35 | D | 弱势 |
+
+---
+
+## 止损止盈
+
+| 评分 | 止损 | 止盈 |
+|------|------|------|
+| ≥55 | -5% | 15-20% |
+| <55 | -3% | 10% |
+
+---
+
+## 免责声明
+
+**本工具仅供参考，不构成投资建议。**
+- 股票市场有风险，投资需谨慎
+- 量化选股有局限性，不保证盈利
+- 请结合自身判断做出投资决策
