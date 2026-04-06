@@ -1,0 +1,892 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>小金库 - 智能股票选股验证系统</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0e17;
+            --bg-secondary: #111827;
+            --bg-card: #1a2332;
+            --bg-card-hover: #232f45;
+            --border: #2a3a52;
+            --text-primary: #e8edf5;
+            --text-secondary: #8b9dc3;
+            --text-muted: #5a6a8a;
+            --accent-cyan: #00d4ff;
+            --accent-green: #00ff88;
+            --accent-red: #ff4757;
+            --accent-yellow: #ffd93d;
+            --accent-purple: #a855f7;
+            --glow-cyan: 0 0 20px rgba(0, 212, 255, 0.3);
+            --glow-green: 0 0 20px rgba(0, 255, 136, 0.3);
+            --glow-red: 0 0 20px rgba(255, 71, 87, 0.3);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Noto Sans SC', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        .font-mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: var(--bg-secondary);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
+        }
+
+        /* Animations */
+        @keyframes pulse-glow {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        @keyframes slide-up {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes flicker {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.8; }
+        }
+
+        @keyframes data-flow {
+            0% { background-position: 0% 0%; }
+            100% { background-position: 200% 0%; }
+        }
+
+        .animate-slide-up {
+            animation: slide-up 0.5s ease-out forwards;
+        }
+
+        .animate-pulse-glow {
+            animation: pulse-glow 2s ease-in-out infinite;
+        }
+
+        .animate-flicker {
+            animation: flicker 0.1s ease-in-out infinite;
+        }
+
+        /* Grid background */
+        .grid-bg {
+            background-image:
+                linear-gradient(rgba(0, 212, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 212, 255, 0.03) 1px, transparent 1px);
+            background-size: 50px 50px;
+        }
+
+        /* Glass effect */
+        .glass {
+            background: rgba(26, 35, 50, 0.8);
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--border);
+        }
+
+        /* Score bar */
+        .score-bar {
+            height: 6px;
+            border-radius: 3px;
+            background: var(--bg-secondary);
+            overflow: hidden;
+        }
+
+        .score-bar-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.6s ease-out;
+        }
+
+        /* Card hover effect */
+        .card-hover {
+            transition: all 0.3s ease;
+        }
+        .card-hover:hover {
+            background: var(--bg-card-hover);
+            transform: translateY(-2px);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+        }
+
+        /* Dimension radar */
+        .radar-chart {
+            position: relative;
+            width: 200px;
+            height: 200px;
+        }
+
+        /* Trend indicator */
+        .trend-up {
+            color: var(--accent-green);
+            text-shadow: var(--glow-green);
+        }
+        .trend-down {
+            color: var(--accent-red);
+            text-shadow: var(--glow-red);
+        }
+        .trend-neutral {
+            color: var(--accent-cyan);
+        }
+
+        /* Tab active state */
+        .tab-active {
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.2), rgba(0, 212, 255, 0.05));
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+        }
+
+        /* Status badge */
+        .status-success { background: rgba(0, 255, 136, 0.15); color: var(--accent-green); border: 1px solid rgba(0, 255, 136, 0.3); }
+        .status-fail { background: rgba(255, 71, 87, 0.15); color: var(--accent-red); border: 1px solid rgba(255, 71, 87, 0.3); }
+        .status-warning { background: rgba(255, 217, 61, 0.15); color: var(--accent-yellow); border: 1px solid rgba(255, 217, 61, 0.3); }
+        .status-info { background: rgba(0, 212, 255, 0.15); color: var(--accent-cyan); border: 1px solid rgba(0, 212, 255, 0.3); }
+
+        /* Decorative elements */
+        .corner-decoration {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            border-color: var(--accent-cyan);
+            opacity: 0.5;
+        }
+        .corner-tl { top: -1px; left: -1px; border-top: 2px solid; border-left: 2px solid; }
+        .corner-tr { top: -1px; right: -1px; border-top: 2px solid; border-right: 2px solid; }
+        .corner-bl { bottom: -1px; left: -1px; border-bottom: 2px solid; border-left: 2px solid; }
+        .corner-br { bottom: -1px; right: -1px; border-bottom: 2px solid; border-right: 2px solid; }
+
+        /* Progress ring */
+        .progress-ring {
+            transform: rotate(-90deg);
+        }
+        .progress-ring-circle {
+            transition: stroke-dashoffset 0.6s ease-out;
+        }
+    </style>
+</head>
+<body class="grid-bg">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Mock data for demonstration
+        const mockStocks = [
+            { code: '603288', name: '海天味业', price: 45.67, change: 2.35, rating: 'A', score: 82, signal: '强烈推荐买入', dimensions: { 趋势: 95, 动量: 78, 量价: 85, 形态: 72, 位置: 65, 情绪: 80 } },
+            { code: '600519', name: '贵州茅台', price: 1680.00, change: -1.23, rating: 'B+', score: 71, signal: '加仓', dimensions: { 趋势: 75, 动量: 68, 量价: 72, 形态: 70, 位置: 68, 情绪: 75 } },
+            { code: '000858', name: '五粮液', price: 145.50, change: 1.87, rating: 'B+', score: 69, signal: '持有/加仓', dimensions: { 趋势: 80, 动量: 65, 量价: 68, 形态: 62, 位置: 70, 情绪: 65 } },
+            { code: '601318', name: '中国平安', price: 48.32, change: 0.45, rating: 'B', score: 62, signal: '持有', dimensions: { 趋势: 60, 动量: 55, 量价: 65, 形态: 58, 位置: 72, 情绪: 60 } },
+            { code: '600036', name: '招商银行', price: 35.78, change: -0.89, rating: 'B', score: 58, signal: '持有', dimensions: { 趋势: 55, 动量: 52, 量价: 60, 形态: 55, 位置: 65, 情绪: 58 } },
+        ];
+
+        const mockVerification = {
+            date: '2026-04-06',
+            picksDate: '2026-04-05',
+            total: 5,
+            success: 3,
+            fail: 2,
+            avgChange: 0.87,
+            dimensionStats: {
+                '趋势': { success: 4, total: 5, rate: 0.80 },
+                '动量': { success: 3, total: 5, rate: 0.60 },
+                '量价': { success: 4, total: 5, rate: 0.80 },
+                '形态': { success: 3, total: 5, rate: 0.60 },
+                '位置': { success: 2, total: 5, rate: 0.40 },
+                '情绪': { success: 3, total: 5, rate: 0.60 },
+            },
+            verifications: [
+                { code: '603288', name: '海天味业', change: 2.35, result: '成功', reason: '量比放大至1.8, 均线多头延续' },
+                { code: '600519', name: '贵州茅台', change: -1.23, result: '失败', reason: '白酒板块情绪偏弱' },
+                { code: '000858', name: '五粮液', change: 1.87, result: '成功', reason: '放量上涨，MACD走强' },
+                { code: '601318', name: '中国平安', change: 0.45, result: '平盘', reason: '震荡整理' },
+                { code: '600036', name: '招商银行', change: -0.89, result: '失败', reason: '银行板块轮动拖累' },
+            ]
+        };
+
+        const mockPositions = [
+            { code: '600519', name: '贵州茅台', entryPrice: 1700, currentPrice: 1785, holdingDays: 5, profitLoss: 5.0, sellScore: 55, suggestion: '谨慎持有' },
+        ];
+
+        const mockAlerts = [
+            { type: 'MACD金叉', code: '601328', message: 'MACD在0轴附近形成金叉', level: 'success', time: '14:30', suggestion: '短线看多信号，可考虑买入' },
+            { type: '大幅上涨', code: '600519', message: '上涨 5.23%，价格: 1850.00', level: 'warning', time: '14:25', suggestion: '关注是否延续趋势' },
+        ];
+
+        // Icons
+        const Icons = {
+            trend: (
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                </svg>
+            ),
+            shield: (
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                </svg>
+            ),
+            chart: (
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+            ),
+            bell: (
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                </svg>
+            ),
+            sell: (
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+            ),
+            eye: (
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                </svg>
+            ),
+        };
+
+        // Header Component
+        function Header({ activeTab, setActiveTab }) {
+            const tabs = [
+                { id: 'screener', label: '选股看板', icon: Icons.chart },
+                { id: 'verification', label: '每日验证', icon: Icons.shield },
+                { id: 'sell', label: '卖出决策', icon: Icons.sell },
+                { id: 'monitor', label: '自选监控', icon: Icons.eye },
+            ];
+
+            return (
+                <header className="sticky top-0 z-50 glass border-b border-[var(--border)]">
+                    <div className="max-w-7xl mx-auto px-6 py-4">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                                <div className="relative">
+                                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[var(--accent-cyan)] to-[var(--accent-purple)] flex items-center justify-center">
+                                        <span className="text-white font-bold text-lg">金</span>
+                                    </div>
+                                    <div className="absolute -top-1 -right-1 w-3 h-3 bg-[var(--accent-green)] rounded-full animate-pulse-glow"></div>
+                                </div>
+                                <div>
+                                    <h1 className="text-xl font-bold tracking-tight">
+                                        <span className="text-[var(--accent-cyan)]">小金库</span>
+                                        <span className="text-[var(--text-secondary)] font-normal ml-2 text-sm">智能选股系统</span>
+                                    </h1>
+                                    <p className="text-xs text-[var(--text-muted)] font-mono">v4.1 | 六维度战法</p>
+                                </div>
+                            </div>
+
+                            <nav className="flex items-center gap-2">
+                                {tabs.map(tab => (
+                                    <button
+                                        key={tab.id}
+                                        onClick={() => setActiveTab(tab.id)}
+                                        className={`flex items-center gap-2 px-4 py-2 rounded-lg border transition-all duration-300 ${
+                                            activeTab === tab.id
+                                                ? 'tab-active'
+                                                : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-card)]'
+                                        }`}
+                                    >
+                                        {tab.icon}
+                                        <span className="text-sm font-medium">{tab.label}</span>
+                                    </button>
+                                ))}
+                            </nav>
+
+                            <div className="flex items-center gap-4">
+                                <div className="text-right">
+                                    <p className="text-xs text-[var(--text-muted)]">实时数据</p>
+                                    <p className="text-sm font-mono text-[var(--accent-green)] flex items-center gap-1">
+                                        <span className="w-2 h-2 bg-[var(--accent-green)] rounded-full animate-pulse-glow"></span>
+                                        已连接
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </header>
+            );
+        }
+
+        // Score Bar Component
+        function ScoreBar({ score, maxScore = 100, color = 'var(--accent-cyan)' }) {
+            const percentage = (score / maxScore) * 100;
+            return (
+                <div className="score-bar">
+                    <div
+                        className="score-bar-fill"
+                        style={{ width: `${percentage}%`, background: color }}
+                    />
+                </div>
+            );
+        }
+
+        // Stock Card Component
+        function StockCard({ stock, index }) {
+            const getRatingColor = (rating) => {
+                switch(rating) {
+                    case 'A': return 'var(--accent-green)';
+                    case 'B+': return 'var(--accent-cyan)';
+                    case 'B': return 'var(--accent-yellow)';
+                    case 'C': return 'var(--accent-red)';
+                    default: return 'var(--text-muted)';
+                }
+            };
+
+            const getSignalBadge = (signal) => {
+                if (signal.includes('强烈推荐')) return 'status-success';
+                if (signal.includes('加仓') || signal.includes('买入')) return 'status-info';
+                if (signal.includes('持有')) return 'status-warning';
+                return 'status-fail';
+            };
+
+            const changeColor = stock.change >= 0 ? 'trend-up' : 'trend-down';
+            const changePrefix = stock.change >= 0 ? '+' : '';
+
+            return (
+                <div
+                    className="glass rounded-xl p-5 card-hover animate-slide-up"
+                    style={{ animationDelay: `${index * 100}ms` }}
+                >
+                    <div className="corner-decoration corner-tl"></div>
+                    <div className="corner-decoration corner-tr"></div>
+                    <div className="corner-decoration corner-bl"></div>
+                    <div className="corner-decoration corner-br"></div>
+
+                    <div className="flex items-start justify-between mb-4">
+                        <div>
+                            <div className="flex items-center gap-2">
+                                <span className="font-mono text-lg font-bold">{stock.code}</span>
+                                <span className="text-[var(--text-secondary)]">{stock.name}</span>
+                            </div>
+                            <div className="flex items-center gap-3 mt-1">
+                                <span
+                                    className="text-2xl font-mono font-bold"
+                                    style={{ color: getRatingColor(stock.rating) }}
+                                >
+                                    {stock.rating}
+                                </span>
+                                <span className={`text-lg font-mono font-semibold ${changeColor}`}>
+                                    {changePrefix}{stock.change.toFixed(2)}%
+                                </span>
+                            </div>
+                        </div>
+                        <div className="text-right">
+                            <p className="font-mono text-xl font-bold">¥{stock.price.toLocaleString()}</p>
+                            <span className={`inline-block mt-1 px-2 py-0.5 rounded text-xs font-medium ${getSignalBadge(stock.signal)}`}>
+                                {stock.signal}
+                            </span>
+                        </div>
+                    </div>
+
+                    <div className="flex items-center justify-between mb-3">
+                        <span className="text-sm text-[var(--text-secondary)]">综合评分</span>
+                        <span className="font-mono text-2xl font-bold text-[var(--accent-cyan)]">{stock.score}</span>
+                    </div>
+                    <ScoreBar score={stock.score} color="var(--accent-cyan)" />
+
+                    <div className="grid grid-cols-3 gap-2 mt-4">
+                        {Object.entries(stock.dimensions).map(([key, value]) => (
+                            <div key={key} className="bg-[var(--bg-secondary)] rounded-lg p-2 text-center">
+                                <p className="text-xs text-[var(--text-muted)]">{key}</p>
+                                <p className="font-mono font-bold text-sm" style={{ color: value >= 70 ? 'var(--accent-green)' : value >= 50 ? 'var(--accent-cyan)' : 'var(--accent-yellow)' }}>
+                                    {value}
+                                </p>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        }
+
+        // Screener Tab Component
+        function ScreenerTab() {
+            return (
+                <div className="space-y-6">
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <h2 className="text-2xl font-bold">出击股票</h2>
+                            <p className="text-[var(--text-secondary)] mt-1">基于六维度战法精选 {mockStocks.length} 只股票</p>
+                        </div>
+                        <div className="flex items-center gap-4">
+                            <select className="bg-[var(--bg-card)] border border-[var(--border)] rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-[var(--accent-cyan)]">
+                                <option>全市场</option>
+                                <option>创业板</option>
+                                <option>科创板</option>
+                            </select>
+                            <button className="px-4 py-2 bg-[var(--accent-cyan)] text-[var(--bg-primary)] rounded-lg font-medium hover:opacity-90 transition-opacity">
+                                刷新数据
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+                        {mockStocks.map((stock, index) => (
+                            <StockCard key={stock.code} stock={stock} index={index} />
+                        ))}
+                    </div>
+                </div>
+            );
+        }
+
+        // Verification Tab Component
+        function VerificationTab() {
+            const v = mockVerification;
+            const successRate = (v.success / v.total) * 100;
+
+            return (
+                <div className="space-y-6">
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <h2 className="text-2xl font-bold">每日验证</h2>
+                            <p className="text-[var(--text-secondary)] mt-1">验证日期: {v.date} | 选股日期: {v.picksDate}</p>
+                        </div>
+                        <button className="px-4 py-2 bg-[var(--accent-cyan)] text-[var(--bg-primary)] rounded-lg font-medium hover:opacity-90 transition-opacity">
+                            执行验证
+                        </button>
+                    </div>
+
+                    {/* Summary Cards */}
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <div className="glass rounded-xl p-5">
+                            <p className="text-sm text-[var(--text-muted)]">验证股票数</p>
+                            <p className="text-3xl font-bold font-mono mt-1">{v.total}</p>
+                        </div>
+                        <div className="glass rounded-xl p-5">
+                            <p className="text-sm text-[var(--text-muted)]">成功率</p>
+                            <p className="text-3xl font-bold font-mono mt-1 text-[var(--accent-green)]">{successRate.toFixed(1)}%</p>
+                        </div>
+                        <div className="glass rounded-xl p-5">
+                            <p className="text-sm text-[var(--text-muted)]">平均涨幅</p>
+                            <p className={`text-3xl font-bold font-mono mt-1 ${v.avgChange >= 0 ? 'text-[var(--accent-green)]' : 'text-[var(--accent-red)]'}`}>
+                                {v.avgChange >= 0 ? '+' : ''}{v.avgChange.toFixed(2)}%
+                            </p>
+                        </div>
+                        <div className="glass rounded-xl p-5">
+                            <p className="text-sm text-[var(--text-muted)]">成功/失败</p>
+                            <p className="text-3xl font-bold font-mono mt-1">
+                                <span className="text-[var(--accent-green)]">{v.success}</span>
+                                <span className="text-[var(--text-muted)]">/</span>
+                                <span className="text-[var(--accent-red)]">{v.fail}</span>
+                            </p>
+                        </div>
+                    </div>
+
+                    {/* Dimension Stats */}
+                    <div className="glass rounded-xl p-6">
+                        <h3 className="text-lg font-bold mb-4">各维度成功率</h3>
+                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                            {Object.entries(v.dimensionStats).map(([dim, stats]) => {
+                                const rate = stats.rate * 100;
+                                const color = rate >= 70 ? 'var(--accent-green)' : rate >= 50 ? 'var(--accent-cyan)' : 'var(--accent-red)';
+                                return (
+                                    <div key={dim} className="text-center">
+                                        <div className="relative w-16 h-16 mx-auto">
+                                            <svg className="progress-ring w-16 h-16">
+                                                <circle
+                                                    cx="32" cy="32" r="28"
+                                                    fill="none"
+                                                    stroke="var(--bg-secondary)"
+                                                    strokeWidth="6"
+                                                />
+                                                <circle
+                                                    className="progress-ring-circle"
+                                                    cx="32" cy="32" r="28"
+                                                    fill="none"
+                                                    stroke={color}
+                                                    strokeWidth="6"
+                                                    strokeLinecap="round"
+                                                    strokeDasharray={`${2 * Math.PI * 28}`}
+                                                    strokeDashoffset={`${2 * Math.PI * 28 * (1 - stats.rate)}`}
+                                                />
+                                            </svg>
+                                            <span className="absolute inset-0 flex items-center justify-center font-mono font-bold text-sm" style={{ color }}>
+                                                {rate.toFixed(0)}%
+                                            </span>
+                                        </div>
+                                        <p className="mt-2 font-medium">{dim}</p>
+                                        <p className="text-xs text-[var(--text-muted)]">{stats.success}/{stats.total}</p>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    {/* Verification Details */}
+                    <div className="glass rounded-xl p-6">
+                        <h3 className="text-lg font-bold mb-4">单只验证</h3>
+                        <div className="overflow-x-auto">
+                            <table className="w-full">
+                                <thead>
+                                    <tr className="text-left text-[var(--text-muted)] text-sm border-b border-[var(--border)]">
+                                        <th className="pb-3 font-medium">代码</th>
+                                        <th className="pb-3 font-medium">名称</th>
+                                        <th className="pb-3 font-medium">当日涨幅</th>
+                                        <th className="pb-3 font-medium">判定</th>
+                                        <th className="pb-3 font-medium">分析原因</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {v.verifications.map((item, index) => (
+                                        <tr key={index} className="border-b border-[var(--border)]/50 hover:bg-[var(--bg-card)]/50 transition-colors">
+                                            <td className="py-3 font-mono">{item.code}</td>
+                                            <td className="py-3">{item.name}</td>
+                                            <td className={`py-3 font-mono font-medium ${item.change >= 0 ? 'text-[var(--accent-green)]' : 'text-[var(--accent-red)]'}`}>
+                                                {item.change >= 0 ? '+' : ''}{item.change.toFixed(2)}%
+                                            </td>
+                                            <td className="py-3">
+                                                <span className={`px-2 py-0.5 rounded text-xs font-medium ${item.result === '成功' ? 'status-success' : item.result === '失败' ? 'status-fail' : 'status-warning'}`}>
+                                                    {item.result}
+                                                </span>
+                                            </td>
+                                            <td className="py-3 text-[var(--text-secondary)] text-sm">{item.reason}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // Sell Tab Component
+        function SellTab() {
+            const position = mockPositions[0];
+
+            return (
+                <div className="space-y-6">
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <h2 className="text-2xl font-bold">卖出决策</h2>
+                            <p className="text-[var(--text-secondary)] mt-1">持仓分析 & 分档卖出方案</p>
+                        </div>
+                        <button className="px-4 py-2 bg-[var(--accent-cyan)] text-[var(--bg-primary)] rounded-lg font-medium hover:opacity-90 transition-opacity">
+                            新增持仓
+                        </button>
+                    </div>
+
+                    {/* Position Overview */}
+                    <div className="glass rounded-xl p-6">
+                        <div className="flex items-start justify-between mb-6">
+                            <div className="flex items-center gap-4">
+                                <div className="w-16 h-16 rounded-xl bg-gradient-to-br from-[var(--accent-purple)] to-[var(--accent-cyan)] flex items-center justify-center">
+                                    <span className="text-white font-bold text-xl">{position.code.slice(0, 3)}</span>
+                                </div>
+                                <div>
+                                    <h3 className="text-xl font-bold">{position.name}</h3>
+                                    <p className="text-[var(--text-muted)] font-mono">{position.code}</p>
+                                </div>
+                            </div>
+                            <div className="text-right">
+                                <p className={`text-3xl font-bold font-mono ${position.profitLoss >= 0 ? 'text-[var(--accent-green)]' : 'text-[var(--accent-red)]'}`}>
+                                    {position.profitLoss >= 0 ? '+' : ''}{position.profitLoss.toFixed(2)}%
+                                </p>
+                                <p className="text-[var(--text-muted)] text-sm">持仓 {position.holdingDays} 天</p>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                            <div className="bg-[var(--bg-secondary)] rounded-lg p-4">
+                                <p className="text-xs text-[var(--text-muted)]">买入价</p>
+                                <p className="text-lg font-mono font-bold mt-1">¥{position.entryPrice.toLocaleString()}</p>
+                            </div>
+                            <div className="bg-[var(--bg-secondary)] rounded-lg p-4">
+                                <p className="text-xs text-[var(--text-muted)]">当前价</p>
+                                <p className="text-lg font-mono font-bold mt-1">¥{position.currentPrice.toLocaleString()}</p>
+                            </div>
+                            <div className="bg-[var(--bg-secondary)] rounded-lg p-4">
+                                <p className="text-xs text-[var(--text-muted)]">止损位</p>
+                                <p className="text-lg font-mono font-bold mt-1 text-[var(--accent-red)]">¥{(position.entryPrice * 0.93).toFixed(2)}</p>
+                            </div>
+                            <div className="bg-[var(--bg-secondary)] rounded-lg p-4">
+                                <p className="text-xs text-[var(--text-muted)]">止盈位</p>
+                                <p className="text-lg font-mono font-bold mt-1 text-[var(--accent-green)]">¥{(position.currentPrice * 1.15).toFixed(2)}</p>
+                            </div>
+                        </div>
+
+                        {/* Sell Score */}
+                        <div className="flex items-center justify-between mb-4">
+                            <span className="text-sm text-[var(--text-secondary)]">综合卖出评分</span>
+                            <span className="font-mono text-2xl font-bold text-[var(--accent-yellow)]">{position.sellScore}</span>
+                        </div>
+                        <ScoreBar score={position.sellScore} maxScore={100} color="var(--accent-yellow)" />
+
+                        <div className="mt-6 p-4 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border)]">
+                            <div className="flex items-center gap-2 mb-2">
+                                <Icons.bell />
+                                <span className="font-medium">卖出建议</span>
+                            </div>
+                            <p className="text-[var(--accent-yellow)] font-medium">{position.suggestion}</p>
+                            <p className="text-sm text-[var(--text-secondary)] mt-1">持仓时间较短，建议关注量价配合情况</p>
+                        </div>
+                    </div>
+
+                    {/* Sell Signals */}
+                    <div className="glass rounded-xl p-6">
+                        <h3 className="text-lg font-bold mb-4">卖出信号检测</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                            {[
+                                { name: '高位十字星', source: '一买即涨', weight: 20, detected: false },
+                                { name: '均线死叉', source: '一买即涨', weight: 15, detected: false },
+                                { name: 'MACD死叉', source: '一买即涨', weight: 15, detected: true },
+                                { name: '缩量滞涨', source: '量学', weight: 10, detected: true },
+                            ].map((signal, index) => (
+                                <div key={index} className={`p-4 rounded-lg border transition-all ${signal.detected ? 'bg-[var(--accent-red)]/10 border-[var(--accent-red)]/30' : 'bg-[var(--bg-secondary)] border-[var(--border)]'}`}>
+                                    <div className="flex items-center justify-between">
+                                        <span className={signal.detected ? 'text-[var(--accent-red)]' : 'text-[var(--text-secondary)]'}>
+                                            {signal.name}
+                                        </span>
+                                        {signal.detected && (
+                                            <span className="text-xs px-2 py-0.5 rounded bg-[var(--accent-red)]/20 text-[var(--accent-red)]">已触发</span>
+                                        )}
+                                    </div>
+                                    <p className="text-xs text-[var(--text-muted)] mt-1">《{signal.source}》权重{signal.weight}分</p>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Tiered Sell Plan */}
+                    <div className="glass rounded-xl p-6">
+                        <h3 className="text-lg font-bold mb-4">分档卖出方案</h3>
+                        <div className="space-y-3">
+                            <div className="flex items-center gap-4 p-4 rounded-lg bg-[var(--bg-secondary)]">
+                                <div className="w-12 h-12 rounded-lg bg-[var(--accent-green)]/20 flex items-center justify-center text-[var(--accent-green)] font-bold">
+                                    1档
+                                </div>
+                                <div className="flex-1">
+                                    <div className="flex items-center justify-between">
+                                        <span className="font-medium">50% 仓位</span>
+                                        <span className="text-sm text-[var(--text-muted)]">¥{(position.currentPrice * 1.05).toFixed(2)}</span>
+                                    </div>
+                                    <p className="text-sm text-[var(--text-secondary)] mt-1">再次上涨5%后卖出，锁利部分仓位</p>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-4 p-4 rounded-lg bg-[var(--bg-secondary)]">
+                                <div className="w-12 h-12 rounded-lg bg-[var(--accent-cyan)]/20 flex items-center justify-center text-[var(--accent-cyan)] font-bold">
+                                    2档
+                                </div>
+                                <div className="flex-1">
+                                    <div className="flex items-center justify-between">
+                                        <span className="font-medium">30% 仓位</span>
+                                        <span className="text-sm text-[var(--text-muted)]">¥{(position.currentPrice * 1.10).toFixed(2)}</span>
+                                    </div>
+                                    <p className="text-sm text-[var(--text-secondary)] mt-1">继续上涨10%目标位卖出</p>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-4 p-4 rounded-lg bg-[var(--bg-secondary)]">
+                                <div className="w-12 h-12 rounded-lg bg-[var(--accent-yellow)]/20 flex items-center justify-center text-[var(--accent-yellow)] font-bold">
+                                    3档
+                                </div>
+                                <div className="flex-1">
+                                    <div className="flex items-center justify-between">
+                                        <span className="font-medium">20% 仓位</span>
+                                        <span className="text-sm text-[var(--text-muted)]">不破止损不出</span>
+                                    </div>
+                                    <p className="text-sm text-[var(--text-secondary)] mt-1">博取更大趋势，趋势破位坚决出局</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // Monitor Tab Component
+        function MonitorTab() {
+            return (
+                <div className="space-y-6">
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <h2 className="text-2xl font-bold">自选监控</h2>
+                            <p className="text-[var(--text-secondary)] mt-1">实时信号检测 & 智能提醒</p>
+                        </div>
+                        <div className="flex items-center gap-3">
+                            <button className="px-4 py-2 bg-[var(--bg-card)] border border-[var(--border)] rounded-lg hover:bg-[var(--bg-card-hover)] transition-colors">
+                                添加自选
+                            </button>
+                            <button className="px-4 py-2 bg-[var(--accent-cyan)] text-[var(--bg-primary)] rounded-lg font-medium hover:opacity-90 transition-opacity">
+                                检查信号
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Stats */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="glass rounded-xl p-5 flex items-center gap-4">
+                            <div className="w-12 h-12 rounded-lg bg-[var(--accent-green)]/20 flex items-center justify-center">
+                                <span className="text-[var(--accent-green)] text-xl">✓</span>
+                            </div>
+                            <div>
+                                <p className="text-sm text-[var(--text-muted)]">自选股数量</p>
+                                <p className="text-2xl font-bold font-mono">8 只</p>
+                            </div>
+                        </div>
+                        <div className="glass rounded-xl p-5 flex items-center gap-4">
+                            <div className="w-12 h-12 rounded-lg bg-[var(--accent-yellow)]/20 flex items-center justify-center">
+                                <span className="text-[var(--accent-yellow)] text-xl">⚠</span>
+                            </div>
+                            <div>
+                                <p className="text-sm text-[var(--text-muted)]">待处理信号</p>
+                                <p className="text-2xl font-bold font-mono">{mockAlerts.length} 个</p>
+                            </div>
+                        </div>
+                        <div className="glass rounded-xl p-5 flex items-center gap-4">
+                            <div className="w-12 h-12 rounded-lg bg-[var(--accent-red)]/20 flex items-center justify-center">
+                                <span className="text-[var(--accent-red)] text-xl">✗</span>
+                            </div>
+                            <div>
+                                <p className="text-sm text-[var(--text-muted)]">风险提醒</p>
+                                <p className="text-2xl font-bold font-mono">1 个</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Alerts */}
+                    <div className="glass rounded-xl p-6">
+                        <h3 className="text-lg font-bold mb-4">未读提醒</h3>
+                        <div className="space-y-3">
+                            {mockAlerts.map((alert, index) => (
+                                <div
+                                    key={index}
+                                    className={`p-4 rounded-lg border transition-all ${
+                                        alert.level === 'success'
+                                            ? 'bg-[var(--accent-green)]/5 border-[var(--accent-green)]/30'
+                                            : alert.level === 'warning'
+                                            ? 'bg-[var(--accent-yellow)]/5 border-[var(--accent-yellow)]/30'
+                                            : 'bg-[var(--accent-red)]/5 border-[var(--accent-red)]/30'
+                                    }`}
+                                >
+                                    <div className="flex items-start gap-3">
+                                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                                            alert.level === 'success'
+                                                ? 'bg-[var(--accent-green)]/20 text-[var(--accent-green)]'
+                                                : alert.level === 'warning'
+                                                ? 'bg-[var(--accent-yellow)]/20 text-[var(--accent-yellow)]'
+                                                : 'bg-[var(--accent-red)]/20 text-[var(--accent-red)]'
+                                        }`}>
+                                            {alert.level === 'success' ? '✓' : alert.level === 'warning' ? '⚠' : '✗'}
+                                        </div>
+                                        <div className="flex-1">
+                                            <div className="flex items-center gap-2">
+                                                <span className="font-medium">{alert.code}</span>
+                                                <span className="text-xs px-2 py-0.5 rounded bg-[var(--bg-secondary)] text-[var(--text-muted)]">{alert.type}</span>
+                                                <span className="text-xs text-[var(--text-muted)] ml-auto">{alert.time}</span>
+                                            </div>
+                                            <p className="text-sm text-[var(--text-secondary)] mt-1">{alert.message}</p>
+                                            <p className="text-sm mt-2">
+                                                <span className="text-[var(--text-muted)]">建议: </span>
+                                                <span className="text-[var(--accent-cyan)]">{alert.suggestion}</span>
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Watchlist */}
+                    <div className="glass rounded-xl p-6">
+                        <h3 className="text-lg font-bold mb-4">自选列表</h3>
+                        <div className="overflow-x-auto">
+                            <table className="w-full">
+                                <thead>
+                                    <tr className="text-left text-[var(--text-muted)] text-sm border-b border-[var(--border)]">
+                                        <th className="pb-3 font-medium">代码</th>
+                                        <th className="pb-3 font-medium">名称</th>
+                                        <th className="pb-3 font-medium">最新价</th>
+                                        <th className="pb-3 font-medium">涨跌幅</th>
+                                        <th className="pb-3 font-medium">信号</th>
+                                        <th className="pb-3 font-medium">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {mockStocks.map((stock, index) => (
+                                        <tr key={index} className="border-b border-[var(--border)]/50 hover:bg-[var(--bg-card)]/50 transition-colors">
+                                            <td className="py-3 font-mono">{stock.code}</td>
+                                            <td className="py-3">{stock.name}</td>
+                                            <td className="py-3 font-mono">¥{stock.price.toLocaleString()}</td>
+                                            <td className={`py-3 font-mono font-medium ${stock.change >= 0 ? 'text-[var(--accent-green)]' : 'text-[var(--accent-red)]'}`}>
+                                                {stock.change >= 0 ? '+' : ''}{stock.change.toFixed(2)}%
+                                            </td>
+                                            <td className="py-3">
+                                                <span className="px-2 py-0.5 rounded text-xs bg-[var(--bg-secondary)]">{stock.signal}</span>
+                                            </td>
+                                            <td className="py-3">
+                                                <button className="text-[var(--accent-red)] hover:underline text-sm">移除</button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // Main App Component
+        function App() {
+            const [activeTab, setActiveTab] = useState('screener');
+
+            const renderTab = () => {
+                switch(activeTab) {
+                    case 'screener': return <ScreenerTab />;
+                    case 'verification': return <VerificationTab />;
+                    case 'sell': return <SellTab />;
+                    case 'monitor': return <MonitorTab />;
+                    default: return <ScreenerTab />;
+                }
+            };
+
+            return (
+                <div className="min-h-screen">
+                    <Header activeTab={activeTab} setActiveTab={setActiveTab} />
+
+                    <main className="max-w-7xl mx-auto px-6 py-8">
+                        {renderTab()}
+                    </main>
+
+                    <footer className="border-t border-[var(--border)] mt-12">
+                        <div className="max-w-7xl mx-auto px-6 py-4">
+                            <div className="flex items-center justify-between text-sm text-[var(--text-muted)]">
+                                <p>小金库智能选股系统 v4.1 | 基于九本股市经典著作</p>
+                                <p className="font-mono">数据来源: Tushare Pro / AKShare / Baostock</p>
+                            </div>
+                        </div>
+                    </footer>
+                </div>
+            );
+        }
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+name: Sync to GitHub & Deploy to Vercel
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout current repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config --local user.name "Claude Code"
+          git config --local user.email "noreply@claude.ai"
+
+      - name: Push to target repository
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          # 添加目标仓库作为远程
+          git remote add target https://x-access-token:${GH_TOKEN}@github.com/wandoujia676/trade-stocks.git
+
+          # 推送所有分支和标签
+          git push target main --mirror || true
+
+          # 或者只推送指定文件/文件夹
+          git push target main
