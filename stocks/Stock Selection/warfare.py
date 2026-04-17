@@ -946,11 +946,19 @@ class ComprehensiveWarfare:
         1. 均线金叉 + MACD金叉（双金叉）
         2. 放量突破前高 + RSI顺势
         3. 连续3天上涨 + 成交量放大
+        4. MACD红柱放大 + 均线多头
+        5. 突破整理区间 + 放量
+
+        同时需要排除"已走完主升浪"的股票：
+        - 从近期低点涨幅过大（>25%）→ 已在高位，不追
+        - 连续上涨过久（>5天）→ 可能进入尾声
+        - RSI严重超买（>75）→ 注意回调风险
         """
         result = {
             "启动信号": False,
             "信号强度": "无",
-            "信号详情": []
+            "信号详情": [],
+            "风险提示": []
         }
 
         closes = df['close'].astype(float).values
@@ -1020,6 +1028,56 @@ class ComprehensiveWarfare:
                     if vol_ratio > 1.2:
                         signals.append(("突破整理高点+放量", 25))
 
+        # ============ 排除已走完主升浪的股票（风险过滤）============
+
+        # 1. 从近期低点涨幅过大 → 已在高位，不追
+        low_20 = np.min(closes[-20:])
+        rise_from_low = (closes[-1] - low_20) / low_20 * 100 if low_20 > 0 else 0
+        if rise_from_low > 25:
+            result["风险提示"].append(f"从{20}日低涨幅{rise_from_low:.1f}%（过大）")
+            # 降低信号强度但不直接排除
+            signals = [(name, score * 0.5) for name, score in signals]
+        elif rise_from_low > 15:
+            result["风险提示"].append(f"从{20}日低涨幅{rise_from_low:.1f}%（偏大）")
+
+        # 2. 连续上涨天数过多 → 可能进入尾声
+        if len(closes) >= 6:
+            consecutive_up = 0
+            for i in range(1, min(6, len(closes))):
+                if closes[-i] > closes[-i-1]:
+                    consecutive_up += 1
+                else:
+                    break
+            if consecutive_up >= 5:
+                result["风险提示"].append(f"连续上涨{consecutive_up}天（过长）")
+                signals = [(name, score * 0.7) for name, score in signals]
+            elif consecutive_up >= 4:
+                result["风险提示"].append(f"连续上涨{consecutive_up}天（偏多）")
+
+        # 3. RSI严重超买 → 注意回调风险
+        if rsi_val > 75:
+            result["风险提示"].append(f"RSI超买{rsi_val:.1f}")
+            signals = [(name, score * 0.6) for name, score in signals]
+        elif rsi_val > 70:
+            result["风险提示"].append(f"RSI偏高{rsi_val:.1f}")
+            signals = [(name, score * 0.8) for name, score in signals]
+
+        # 4. 接近区间高点 + 涨幅过大 → 直接排除
+        if len(closes) >= 20:
+            high_20 = np.max(closes[-20:])
+            low_20 = np.min(closes[-20:])
+            range_width = high_20 - low_20
+            if range_width > 0:
+                position_in_range = (closes[-1] - low_20) / range_width
+                if position_in_range > 0.95 and rise_from_low > 20:
+                    # 几乎在区间最高点且已涨很多，直接排除
+                    result["风险提示"].append("接近区间最高点+涨幅过大，谨慎追高")
+                    signals = [(name, score * 0.3) for name, score in signals]
+                elif position_in_range > 0.9 and rise_from_low > 30:
+                    # 涨幅超过30%，即使没在最高点也谨慎
+                    result["风险提示"].append(f"从{20}日低已涨{rise_from_low:.0f}%，可能进入中后段")
+                    signals = [(name, score * 0.4) for name, score in signals]
+
         # ============ 综合评分 ============
         if signals:
             # 取最强信号
@@ -1068,15 +1126,35 @@ class ComprehensiveWarfare:
 
         # ============ 信号判断 ============
 
+        # 获取风险提示
+        wave_signal = result.get("波段信号", {})
+        risk_warnings = wave_signal.get("风险提示", [])
+
+        # 判断风险等级
+        high_risk = any("过大" in r or "过长" in r or "超买" in r for r in risk_warnings)
+        extreme_risk = any("谨慎追高" in r or "中后段" in r for r in risk_warnings)
+
         # 1. 强烈启动信号
         if has_breakout and breakout_strength == "强烈" and composite_score >= 65:
-            signal = "买入"
-            suggestion = "波段启动信号强烈，强烈建议买入"
-            action_level = "主攻"
+            if extreme_risk:
+                signal = "持有/观察"
+                suggestion = "启动信号强烈但风险较高，等待回调"
+                action_level = "观察"
+            elif high_risk:
+                signal = "买入（轻仓）"
+                suggestion = "波段启动信号强烈，但存在一定风险，控制仓位"
+                action_level = "次攻"
+            else:
+                signal = "买入"
+                suggestion = "波段启动信号强烈，强烈建议买入"
+                action_level = "主攻"
 
         # 2. 中等启动信号
         elif has_breakout and breakout_strength == "中等" and composite_score >= 60:
-            signal = "加仓"
+            if extreme_risk:
+                signal = "观望"
+            else:
+                signal = "加仓"
             suggestion = "波段信号确认，可以加仓"
             action_level = "次攻"
 
@@ -1122,6 +1200,7 @@ class ComprehensiveWarfare:
             "波段启动": has_breakout,
             "启动强度": breakout_strength,
             "明日买入条件": tomorrow_conditions,
+            "风险提示": result.get("波段信号", {}).get("风险提示", []),
         }
 
     def _calculate_wave_stops(self, result: Dict[str, Any]) -> Tuple[str, str]:
