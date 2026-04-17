@@ -79,15 +79,72 @@ STOCK_NAMES = {
 
 # 行业分类（用于分层抽样）
 # 注意：这里只作为行业标签备用，不再硬编码为候选池
+# 扩大备选池以支持更广泛的测试
 INDUSTRY_LEADER_CODES = {
-    "银行": ["600036", "601398", "601328", "600016", "601166", "000001"],
-    "证券": ["600030", "601211", "600837", "601688", "000776"],
-    "保险": ["601318", "601628", "601336"],
-    "白酒": ["000858", "000568", "600519", "603288"],
-    "新能源": ["300750", "002594", "601012", "600438"],
-    "医药": ["600276", "603259", "000538", "300760"],
-    "科技": ["000063", "002230", "002415", "300059"],
-    "芯片": ["002371", "688981", "603501", "688008"],
+    # 银行
+    "银行": ["600036", "601398", "601328", "600016", "601166", "000001", "600000", "601229", "601818", "601009", "600015", "601288"],
+    # 证券
+    "证券": ["600030", "601211", "600837", "601688", "000776", "601066", "601555", "600109", "000712", "601878"],
+    # 保险
+    "保险": ["601318", "601628", "601336", "601601"],
+    # 白酒
+    "白酒": ["000858", "000568", "600519", "603288", "600809", "000596", "002304", "000799"],
+    # 新能源
+    "新能源": ["300750", "002594", "601012", "600438", "002466", "600900", "300014", "002459", "600032"],
+    # 医药
+    "医药": ["600276", "603259", "000538", "300760", "002007", "000661", "300015", "600196", "300003"],
+    # 科技/人工智能
+    "AI科技": ["000063", "002230", "002415", "300059", "300024", "002049", "688981", "603501", "688008", "002236"],
+    # 消费电子
+    "消费电子": ["000725", "300866", "002475", "300207", "002351", "002241"],
+    # 互联网
+    "互联网": ["300058", "300113", "002027", "300144"],
+    # 房地产
+    "房地产": ["000002", "600048", "600606", "001979", "600383", "000671"],
+    # 化工
+    "化工": ["600309", "600352", "000830", "002601", "600989", "601216", "601100"],
+    # 机械
+    "机械": ["002460", "600031", "000425", "002048", "300124", "600893", "000768", "002013", "600316", "601698", "600760"],
+    # 食品饮料
+    "食品": ["002557", "603288", "000895", "600419", "002507"],
+    # 传媒
+    "传媒": ["300058", "300226", "002602", "300133"],
+    # 军工
+    "军工": ["600893", "000768", "002013", "600316", "601698", "600760", "600038", "600879"],
+    # 半导体
+    "半导体": ["002371", "688981", "603501", "688008", "002236", "603986", "002049"],
+    # 光伏
+    "光伏": ["601012", "600438", "002459", "600900", "300274", "601665"],
+    # 锂电池
+    "锂电池": ["300750", "002594", "002466", "300014", "002460", "603799", "600711"],
+    # 稀土
+    "稀土": ["600259", "000831", "002176", "300842"],
+    # 军工航天
+    "军工航天": ["600893", "000768", "002013", "600316", "601698", "600760", "600038", "600879", "002025"],
+    # 汽车
+    "汽车": ["002594", "600104", "601238", "000625", "600741", "002126"],
+    # 家电
+    "家电": ["000651", "600690", "000333", "002508", "600060"],
+    # 纺织服装
+    "纺织": ["002293", "600398", "000902", "600400", "002269"],
+    # 商贸零售
+    "商贸": ["600859", "600861", "000759", "002024", "600280"],
+    # 建筑
+    "建筑": ["601668", "600585", "600170", "601117", "600502"],
+    # 钢铁
+    "钢铁": ["600019", "000898", "600307", "002110", "601003"],
+    # 煤炭
+    "煤炭": ["601088", "600188", "000552", "601225", "600971"],
+    # 电力
+    "电力": ["600900", "600795", "600011", "601985", "600900"],
+    # 交通运输
+    "交通": ["601006", "600115", "600221", "000089", "600009"],
+    # 环保
+    "环保": ["601330", "600461", "002310", "300070", "603568"],
+    # 软件服务
+    "软件": ["002230", "300059", "300624", "603927", "688111", "300451"],
+    # 通信
+    "通信": ["000063", "600050", "601728", "600487", "300134"],
 }
 
 # 全市场筛选模式：不再依赖硬编码龙头
@@ -338,7 +395,7 @@ class MonthlyGenerator:
 
     def screen(self, target_count: int = 100) -> List[Dict[str, Any]]:
         """
-        执行月度候选股票筛选
+        执行月度候选股票筛选 - 双轨候选池
 
         Args:
             target_count: 目标选出股票数量，默认100只
@@ -371,12 +428,32 @@ class MonthlyGenerator:
         logger.info(f"获取 {len(ts_codes)} 只股票的日线数据...")
         daily_data = self.get_daily_batched(ts_codes, days=45)
 
-        # 步骤3: 第二轮过滤 - 技术面评分（500 -> 100）
-        scored = self._score_technical(basic_filtered, daily_data)
-        scored.sort(key=lambda x: x["初筛评分"], reverse=True)
+        # 步骤3: 第二轮过滤 - 技术面评分
+        # 双轨筛选：右侧追涨 + 左侧潜伏
+        right_track_count = target_count // 2  # 右侧约50只
+        left_track_count = target_count - right_track_count  # 左侧约50只
 
-        result = scored[:target_count]
-        logger.info(f"最终选出 {len(result)} 只股票")
+        # 右侧候选：按现有评分逻辑
+        right_candidates = self._score_technical(basic_filtered, daily_data, track="right")
+        right_candidates.sort(key=lambda x: x["初筛评分"], reverse=True)
+        right_result = right_candidates[:right_track_count]
+        logger.info(f"右侧候选（追涨）: {len(right_result)} 只")
+
+        # 左侧候选：按超跌反弹逻辑
+        left_candidates = self._filter_left_candidates(basic_filtered, daily_data, target=left_track_count * 2)
+        logger.info(f"左侧候选（潜伏）初步筛选: {len(left_candidates)} 只")
+
+        # 对左侧候选进行评分
+        left_scored = self._score_technical(left_candidates, daily_data, track="left")
+        left_scored.sort(key=lambda x: x["初筛评分"], reverse=True)
+        left_result = left_scored[:left_track_count]
+        logger.info(f"左侧候选（潜伏）: {len(left_result)} 只")
+
+        # 合并结果
+        result = right_result + left_result
+        result.sort(key=lambda x: x["初筛评分"], reverse=True)
+
+        logger.info(f"最终选出 {len(result)} 只股票（右侧{len(right_result)}只 + 左侧{len(left_result)}只）")
 
         return result
 
@@ -451,6 +528,131 @@ class MonthlyGenerator:
         logger.info(f"最终候选股票: {len(filtered)} 只")
         return filtered
 
+    def _filter_left_candidates(self, stocks: pd.DataFrame, daily_data: pd.DataFrame, target: int = 100) -> pd.DataFrame:
+        """
+        筛选左侧候选股票 - 超跌反弹标的
+
+        筛选条件：
+        1. 近期跌幅较大（20日跌幅>15% OR 10日跌幅>10%）
+        2. RSI处于超卖区域（<40）
+        3. BOLL下轨附近（<30%位置）
+        4. 有底部放量迹象
+        """
+        candidates = []
+
+        for _, stock in stocks.iterrows():
+            symbol = stock.get("symbol") or stock.get("code")
+            stock_data = daily_data[daily_data["ts_code"].str.contains(f"{symbol}\\.", regex=True, na=False)]
+
+            if stock_data.empty or len(stock_data) < 30:
+                continue
+
+            close = pd.to_numeric(stock_data["close"], errors="coerce").astype(float)
+            volume = pd.to_numeric(stock_data["volume"], errors="coerce").astype(float)
+
+            if close.empty or len(close) < 20 or close.iloc[-1] <= 0:
+                continue
+
+            # ============ 左侧条件检查 ============
+            # 1. 跌幅条件
+            change_20d = (close.iloc[-1] - close.iloc[-20]) / close.iloc[-20] * 100 if len(close) >= 20 else 0
+            change_10d = (close.iloc[-1] - close.iloc[-10]) / close.iloc[-10] * 100 if len(close) >= 10 else 0
+
+            # 2. RSI超卖
+            rsi = self._calc_rsi(close.values)
+            rsi_val = float(rsi) if rsi is not None else 50
+
+            # 3. BOLL位置
+            ma20 = np.mean(close[-20:])
+            std = np.std(close[-20:])
+            lower = ma20 - 2 * std
+            boll_pos = (close.iloc[-1] - lower) / (ma20 - lower) * 100 if ma20 > lower else 50
+
+            # 4. 量能异动
+            vol_5avg = np.mean(volume[-5:])
+            vol_20avg = np.mean(volume[-20:])
+            vol_ratio = vol_5avg / vol_20avg if vol_20avg > 0 else 1.0
+
+            # 左侧条件满足
+            left_condition = (
+                change_20d < -15 or
+                (rsi_val < 40 and boll_pos < 35) or
+                rsi_val < 35 or
+                (change_10d < -10 and vol_ratio > 1.3)
+            )
+
+            if left_condition:
+                left_score = 0
+                reasons = []
+
+                if change_20d < -20:
+                    left_score += 25
+                    reasons.append(f"深度下跌{abs(change_20d):.1f}%")
+                elif change_20d < -15:
+                    left_score += 15
+                    reasons.append(f"较大跌幅{abs(change_20d):.1f}%")
+
+                if rsi_val < 30:
+                    left_score += 25
+                    reasons.append(f"RSI超卖{rsi_val:.1f}")
+                elif rsi_val < 40:
+                    left_score += 15
+                    reasons.append(f"RSI偏低{rsi_val:.1f}")
+
+                if boll_pos < 20:
+                    left_score += 20
+                    reasons.append("BOLL下轨")
+                elif boll_pos < 30:
+                    left_score += 10
+                    reasons.append("BOLL低位")
+
+                if vol_ratio > 1.5 and close.iloc[-1] > close.iloc[-5]:
+                    left_score += 15
+                    reasons.append("底部放量")
+
+                avg_vol = volume[-20:].mean()
+                if avg_vol < 500000:
+                    left_score -= 10  # 流动性太差扣分
+
+                code_str = str(symbol)
+                name = stock.get("name", STOCK_NAMES.get(code_str, ""))
+                industry = stock.get("industry", "")
+
+                candidates.append({
+                    "symbol": code_str,
+                    "name": name,
+                    "industry": industry,
+                    "左侧评分": left_score,
+                    "评分理由": reasons,
+                    "20日跌幅": round(change_20d, 2),
+                    "RSI": round(rsi_val, 2),
+                    "BOLL位置": round(boll_pos, 1),
+                    "量比": round(vol_ratio, 2),
+                    "最新价": round(float(close.iloc[-1]), 2),
+                })
+
+        # 按左侧评分排序
+        candidates.sort(key=lambda x: x["左侧评分"], reverse=True)
+        return pd.DataFrame(candidates[:target])
+
+    def _calc_rsi(self, prices: np.ndarray, period: int = 14) -> float:
+        """计算RSI"""
+        if len(prices) < period + 1:
+            return 50.0
+        deltas = np.diff(prices)
+        gains = np.where(deltas > 0, deltas, 0)
+        losses = np.where(deltas < 0, -deltas, 0)
+
+        avg_gain = np.mean(gains[-period:])
+        avg_loss = np.mean(losses[-period:])
+
+        if avg_loss == 0:
+            return 100.0
+
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+        return rsi
+
     def _filter_by_industry_leaders(self, stocks: pd.DataFrame) -> pd.DataFrame:
         """按行业龙头方式筛选"""
         result = []
@@ -522,9 +724,14 @@ class MonthlyGenerator:
 
         return pd.DataFrame(result) if result else pd.DataFrame()
 
-    def _score_technical(self, stocks: pd.DataFrame, daily_data: pd.DataFrame) -> List[Dict[str, Any]]:
+    def _score_technical(self, stocks: pd.DataFrame, daily_data: pd.DataFrame, track: str = "right") -> List[Dict[str, Any]]:
         """
         技术面评分 - 优化版
+
+        Args:
+            stocks: 候选股票
+            daily_data: 日线数据
+            track: "right" 右侧追涨 / "left" 左侧潜伏
 
         核心目标：选出高动量股票，而不是稳定型股票
         评分标准来自九本书理论
@@ -532,7 +739,7 @@ class MonthlyGenerator:
         results = []
 
         for _, stock in stocks.iterrows():
-            symbol = stock["symbol"]
+            symbol = stock.get("symbol") or stock.get("code")
             # 获取该股票的日线数据
             stock_data = daily_data[daily_data["ts_code"].str.contains(f"{symbol}\\.", regex=True, na=False)]
 
@@ -634,68 +841,141 @@ class MonthlyGenerator:
             score = 0
             reasons = []
 
-            # 1. 高动量评分（核心！30分）- 5日涨幅越大分数越高
-            if change_5d >= 20:
-                score += 30
-                reasons.append(f"强势5日涨{change_5d:.1f}%")
-            elif change_5d >= 15:
-                score += 25
-                reasons.append(f"强劲5日涨{change_5d:.1f}%")
-            elif change_5d >= 10:
-                score += 20
-                reasons.append(f"强势5日涨{change_5d:.1f}%")
-            elif change_5d >= 5:
-                score += 15
-                reasons.append(f"温和5日涨{change_5d:.1f}%")
-            elif change_5d >= 0:
-                score += 8
+            if track == "right":
+                # ========== 右侧追涨评分 ==========
+                # 1. 高动量评分（核心！30分）- 5日涨幅越大分数越高
+                if change_5d >= 20:
+                    score += 30
+                    reasons.append(f"强势5日涨{change_5d:.1f}%")
+                elif change_5d >= 15:
+                    score += 25
+                    reasons.append(f"强劲5日涨{change_5d:.1f}%")
+                elif change_5d >= 10:
+                    score += 20
+                    reasons.append(f"强势5日涨{change_5d:.1f}%")
+                elif change_5d >= 5:
+                    score += 15
+                    reasons.append(f"温和5日涨{change_5d:.1f}%")
+                elif change_5d >= 0:
+                    score += 8
+                else:
+                    score += 0  # 下跌股票扣分在下面
+
+                # 2. 下跌股票扣分
+                if change_5d < -5:
+                    score -= 15
+                elif change_5d < 0:
+                    score -= 8
+
+                # 3. 涨停基因（20分）- 来自《股道人生》
+                if limit_up_count >= 3:
+                    score += 20
+                    reasons.append(f"10日涨停{limit_up_count}次(强)")
+                elif limit_up_count == 2:
+                    score += 15
+                    reasons.append(f"10日涨停{limit_up_count}次")
+                elif limit_up_count == 1:
+                    score += 10
+                    reasons.append("10日涨停1次")
+
+                # 4. 突破新高加分（15分）- 来自《一买即涨》
+                if dist_to_20high < 2:  # 距离20日新高不到2%
+                    score += 15
+                    reasons.append("逼近20日新高")
+                elif dist_to_20high < 5:  # 距离20日新高不到5%
+                    score += 10
+                    reasons.append("接近20日新高")
+
+                # 5. 量能配合（15分）- 来自《量学》
+                if vol_ratio >= 2.0:
+                    score += 15
+                    reasons.append(f"放量{vol_ratio:.1f}倍")
+                elif vol_ratio >= 1.5:
+                    score += 10
+                    reasons.append(f"温和放量{vol_ratio:.1f}倍")
+                elif vol_ratio >= 1.2:
+                    score += 5
+
+                # 6. 均线多头（10分）- 来自《短线操盘》
+                if latest > ma5 > ma10 > ma20:
+                    score += 10
+                    reasons.append("均线完美多头")
+                elif latest > ma5 > ma10:
+                    score += 7
+                    reasons.append("均线多头")
+                elif latest > ma5:
+                    score += 3
+
             else:
-                score += 0  # 下跌股票扣分在下面
+                # ========== 左侧潜伏评分 ==========
+                # 1. 超跌反弹评分 - 跌幅越大分数越高（但不能太大）
+                if -25 <= change_20d < -20:
+                    score += 25
+                    reasons.append(f"深度超跌反弹{change_20d:.1f}%")
+                elif -20 <= change_20d < -15:
+                    score += 20
+                    reasons.append(f"较大跌幅{change_20d:.1f}%")
+                elif -15 <= change_20d < -10:
+                    score += 15
+                    reasons.append(f"适度下跌{change_20d:.1f}%")
+                elif -10 <= change_20d < -5:
+                    score += 10
+                    reasons.append(f"轻度下跌{change_20d:.1f}%")
+                elif change_20d >= -5 and change_20d <= 5:
+                    score += 5  # 震荡筑底
 
-            # 2. 下跌股票扣分
-            if change_5d < -5:
-                score -= 15
-            elif change_5d < 0:
-                score -= 8
+                # 2. RSI超卖加分
+                rsi = self._calc_rsi(close.values)
+                rsi_val = float(rsi) if rsi is not None else 50
+                if rsi_val < 25:
+                    score += 20
+                    reasons.append(f"RSI深度超卖{rsi_val:.1f}")
+                elif rsi_val < 35:
+                    score += 12
+                    reasons.append(f"RSI超卖{rsi_val:.1f}")
+                elif rsi_val < 45:
+                    score += 5
+                    reasons.append(f"RSI偏低{rsi_val:.1f}")
 
-            # 3. 涨停基因（20分）- 来自《股道人生》
-            if limit_up_count >= 3:
-                score += 20
-                reasons.append(f"10日涨停{limit_up_count}次(强)")
-            elif limit_up_count == 2:
-                score += 15
-                reasons.append(f"10日涨停{limit_up_count}次")
-            elif limit_up_count == 1:
-                score += 10
-                reasons.append("10日涨停1次")
+                # 3. BOLL下轨加分
+                boll_period = 20
+                if len(close) >= boll_period:
+                    ma20_val = np.mean(close[-boll_period:])
+                    std = np.std(close[-boll_period:])
+                    lower = ma20_val - 2 * std
+                    boll_pos = (close.iloc[-1] - lower) / (ma20_val - lower) * 100 if ma20_val > lower else 50
 
-            # 4. 突破新高加分（15分）- 来自《一买即涨》
-            if dist_to_20high < 2:  # 距离20日新高不到2%
-                score += 15
-                reasons.append("逼近20日新高")
-            elif dist_to_20high < 5:  # 距离20日新高不到5%
-                score += 10
-                reasons.append("接近20日新高")
+                    if boll_pos < 20:
+                        score += 15
+                        reasons.append("BOLL下轨极度超卖")
+                    elif boll_pos < 30:
+                        score += 10
+                        reasons.append("BOLL下轨附近")
 
-            # 5. 量能配合（15分）- 来自《量学》
-            if vol_ratio >= 2.0:
-                score += 15
-                reasons.append(f"放量{vol_ratio:.1f}倍")
-            elif vol_ratio >= 1.5:
-                score += 10
-                reasons.append(f"温和放量{vol_ratio:.1f}倍")
-            elif vol_ratio >= 1.2:
-                score += 5
+                # 4. 底部放量加分
+                vol_20avg = volume[-20:].mean()
+                vol_5avg_now = volume[-5:].mean()
+                vol_recent_ratio = vol_5avg_now / vol_20avg if vol_20avg > 0 else 1.0
+                if vol_recent_ratio > 1.8 and close.iloc[-1] > close.iloc[-5]:
+                    score += 15
+                    reasons.append("底部放量上涨（主力介入）")
+                elif vol_recent_ratio > 1.3:
+                    score += 8
+                    reasons.append("温和放量")
 
-            # 6. 均线多头（10分）- 来自《短线操盘》
-            if latest > ma5 > ma10 > ma20:
-                score += 10
-                reasons.append("均线完美多头")
-            elif latest > ma5 > ma10:
-                score += 7
-                reasons.append("均线多头")
-            elif latest > ma5:
-                score += 3
+                # 5. 涨停基因加分（左侧也看重涨停基因，但分值较低）
+                if limit_up_count >= 2:
+                    score += 10
+                    reasons.append(f"10日涨停{limit_up_count}次")
+                elif limit_up_count == 1:
+                    score += 5
+
+                # 6. 均线空头排列加分（左侧）
+                if latest < ma5 < ma10 < ma20:
+                    score += 10
+                    reasons.append("均线空头排列（超跌）")
+                elif latest < ma5 and ma5 < ma10:
+                    score += 5
 
             # 7. ATR波动率加分（10分）- 高波动股票更有机会
             # 来自《交易真相》- 机会来临时敢于重仓
@@ -723,8 +1003,10 @@ class MonthlyGenerator:
                 "最新价": round(latest, 2),
                 "5日涨幅": round(change_5d, 2),
                 "10日涨幅": round(change_10d, 2),
+                "20日涨幅": round(change_20d, 2),
                 "ATR波动": round(atr_pct, 2),
                 "量比": round(vol_ratio, 2),
+                "筛选轨道": track,
             })
 
         return results

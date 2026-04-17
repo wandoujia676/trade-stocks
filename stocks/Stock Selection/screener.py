@@ -32,18 +32,185 @@ class StockScreener:
         self.params = {**SCREENER_DEFAULTS, **(params or {})}
         self.fetcher = get_fetcher()
 
-    def screen(self, market: str = "全市场", limit: int = 20) -> List[Dict[str, Any]]:
+    def screen(self, market: str = "全市场", limit: int = 20, realtime: bool = None) -> List[Dict[str, Any]]:
         """
         执行选股筛选
 
         Args:
             market: 市场范围 (全市场/创业板/科创板/主板)
             limit: 返回数量限制
+            realtime: True=强制实时模式, False=强制完整模式, None=自动判断
 
         Returns:
             筛选后的股票列表，按评分排序
         """
-        logger.info(f"开始选股，市场: {market}, 限制: {limit}")
+        # 自动判断是否使用实时模式
+        if realtime is None:
+            realtime = self._should_use_realtime()
+
+        if realtime:
+            logger.info(f"开始实时选股，市场: {market}, 限制: {limit}")
+            return self._screen_realtime(market, limit)
+        else:
+            logger.info(f"开始完整选股，市场: {market}, 限制: {limit}")
+            return self._screen_full(market, limit)
+
+    def _should_use_realtime(self) -> bool:
+        """
+        自动判断是否应该使用实时模式
+
+        Returns:
+            True 如果当前在交易时间内
+        """
+        try:
+            return self.fetcher.is_market_open()
+        except Exception:
+            return False
+
+    def _screen_realtime(self, market: str, limit: int) -> List[Dict[str, Any]]:
+        """
+        实时选股模式 - 盘中使用实时数据
+
+        流程:
+        1. 获取候选股票池
+        2. 批量获取实时行情
+        3. 快速筛选（基于实时指标）
+        4. 对通过的候选获取历史数据 + 实时评分
+        """
+        # 步骤1: 获取候选股票池
+        candidates = self._get_candidate_pool(market)
+        if not candidates:
+            logger.warning("候选股票池为空")
+            return []
+
+        logger.info(f"候选股票数量: {len(candidates)}")
+
+        # 步骤2: 批量获取实时行情
+        logger.info("获取实时行情...")
+        spots_df = self.fetcher.get_realtime_batch(candidates)
+
+        if spots_df is None or spots_df.empty:
+            logger.warning("实时行情获取失败，降级到完整模式")
+            return self._screen_full(market, limit)
+
+        # 转换为dict便于处理
+        spots = {}
+        for _, row in spots_df.iterrows():
+            spots[row['code']] = row.to_dict()
+
+        logger.info(f"获取到 {len(spots)} 只股票的实时行情")
+
+        # 步骤3: 快速筛选（基于实时指标）
+        # 李成刚核心：买跌不买涨，排除追高
+        # - 涨幅过滤: -5%~15%（排除大涨大跌）
+        # - 量比过滤: >=1.0
+        # - 换手率: >=3% (如果可获取)
+        quick_filtered = []
+        for code, spot in spots.items():
+            try:
+                pct_chg = float(spot.get('pct_chg', 0))  # 注意：不取绝对值
+                volume = int(spot.get('volume', 0))
+
+                # 李成刚原则：排除大涨（>15%）和大跌（<-10%）
+                if pct_chg > 20:  # 超过20%基本是涨停或大涨，不符合左侧
+                    continue
+                if pct_chg < -10:  # 跌幅过大可能是弱势股
+                    continue
+                if volume < 100000:  # 成交量太小
+                    continue
+
+                quick_filtered.append(code)
+            except (ValueError, TypeError):
+                continue
+
+        logger.info(f"快速筛选后剩余: {len(quick_filtered)} 只")
+
+        if not quick_filtered:
+            # 如果没有满足条件的，返回所有有实时数据的股票
+            quick_filtered = list(spots.keys())[:50]
+
+        # 步骤4: 获取历史数据 + 实时评分
+        scored = []
+        for code in quick_filtered[:100]:  # 限制处理数量
+            try:
+                realtime_data = spots.get(code)
+                if not realtime_data:
+                    continue
+
+                # 获取历史日线数据（用于计算技术指标）
+                df_history = self.fetcher.get_daily(code, use_cache=True)
+                if df_history is None or len(df_history) < 20:
+                    continue
+
+                # 调用实时评估
+                warfare = get_warfare()
+                result = warfare.evaluate_realtime(df_history, realtime_data)
+
+                if "error" in result:
+                    continue
+
+                # 提取评分
+                composite = result.get("综合", {}).get("评分", 0)
+                signal = result.get("信号", {})
+                breakout = result.get("启动信号", {})
+
+                scored.append({
+                    "代码": code,
+                    "名称": realtime_data.get('name', ''),
+                    "评级": result.get("综合", {}).get("评级", "B"),
+                    "信号": signal.get("操作", "持有"),
+                    "总分": composite,
+                    "趋势": result.get("趋势", {}).get("评分", 0),
+                    "动量": result.get("动量", {}).get("评分", 0),
+                    "量价": result.get("量价", {}).get("评分", 0),
+                    "形态": result.get("形态", {}).get("评分", 0),
+                    "位置": result.get("位置", {}).get("评分", 0),
+                    "情绪": result.get("情绪", {}).get("评分", 0),
+                    "最新价": realtime_data.get('current', 0),
+                    "涨跌幅": realtime_data.get('pct_chg', 0),
+                    "止损": signal.get("止损", "8%"),
+                    "止盈": signal.get("止盈", "10%"),
+                    "理由": signal.get("理由", []),
+                    "分级": signal.get("分级", "备用"),
+                    "仓位建议": signal.get("仓位建议", ""),
+                    "启动信号": breakout.get("启动信号", False),
+                    "启动强度": breakout.get("信号强度", "无"),
+                    "实时模式": True,
+                    "更新时间": realtime_data.get('update_time', ''),
+                })
+            except Exception as e:
+                logger.debug(f"评估 {code} 失败: {e}")
+                continue
+
+        # 步骤5: 过滤和排序
+        scored = [s for s in scored if "加仓" in s.get("信号", "") or "买入" in s.get("信号", "")]
+
+        scored.sort(key=lambda x: x["总分"], reverse=True)
+
+        logger.info(f"实时选股完成，返回 {min(len(scored), limit)} 只")
+        return scored[:limit]
+
+    def _screen_full(self, market: str, limit: int) -> List[Dict[str, Any]]:
+        """
+        完整选股模式 - 盘后使用完整日线数据
+
+        (原screen()逻辑)
+        """
+        # ============ 步骤0: 大盘趋势判断（李成刚：顺势而为）============
+        print("\n========== 大盘趋势判断 ==========")
+        market_trend = self._get_market_trend()
+        print(f"大盘趋势: {market_trend['趋势']} ({market_trend['评分']}分)")
+        print(f"仓位建议: {market_trend['仓位建议']}")
+        if market_trend.get("原因"):
+            for reason in market_trend["原因"]:
+                print(f"  - {reason}")
+        print(f"建议: {market_trend['建议']}")
+
+        # 根据大盘趋势调整选股数量
+        adjusted_limit = self._get_position_limit(market_trend, limit)
+        if adjusted_limit < limit:
+            print(f"根据大盘趋势，调整选股数量: {limit} → {adjusted_limit}")
+        print("=" * 40)
 
         # 步骤1: 获取候选股票池
         candidates = self._get_candidate_pool(market)
@@ -72,9 +239,14 @@ class StockScreener:
         # 使用包含判断，因为信号可能是"持有/加仓"混合信号
         scored = [s for s in scored if "加仓" in s.get("信号", "") or "买入" in s.get("信号", "") or "强烈推荐" in s.get("信号", "")]
 
+        # ============ 步骤7: 添加大盘趋势信息到结果 ============
+        for stock in scored:
+            stock["大盘趋势"] = market_trend["趋势"]
+            stock["建议仓位"] = market_trend["仓位建议"]
+
         # 排序并返回
         scored.sort(key=lambda x: x["总分"], reverse=True)
-        return scored[:limit]
+        return scored[:adjusted_limit]
 
     def _get_candidate_pool(self, market: str) -> List[str]:
         """
@@ -206,38 +378,54 @@ class StockScreener:
                     continue
 
                 # ========== 通过筛选，计算初步评分 ==========
-                # 用于排序的初步评分
+                # 李成刚核心：左侧买入 = 超跌反弹，不是追涨
+                # 修改：给超跌股票加分，给大涨股票减分
                 pre_score = 0
 
-                # 近期涨幅加分（重点！）
-                if change_5d >= 10:
-                    pre_score += 30
-                elif change_5d >= 5:
-                    pre_score += 20
-                elif change_5d >= 0:
-                    pre_score += 10
+                # 近期涨幅加分（李成刚：超跌才是机会！）
+                # 下跌幅度越大，左侧买点信号越强
+                if change_5d <= -15:
+                    pre_score += 30  # 深度超跌，强烈左侧信号
+                elif change_5d <= -10:
+                    pre_score += 25  # 超跌
+                elif change_5d <= -5:
+                    pre_score += 20  # 跌幅较大
+                elif change_5d <= -2:
+                    pre_score += 15  # 小幅下跌
+                elif change_5d <= 0:
+                    pre_score += 10  # 微跌，正常范围
+                elif change_5d <= 5:
+                    pre_score += 5   # 小幅上涨
+                elif change_5d <= 10:
+                    pre_score += 0   # 涨幅适中，不加分
+                else:
+                    pre_score -= 10  # 大涨超过10%，左侧买点已过
 
-                # 量比加分
-                if vol_ratio >= 2.0:
-                    pre_score += 15
-                elif vol_ratio >= 1.5:
-                    pre_score += 10
-                elif vol_ratio >= 1.0:
-                    pre_score += 5
+                # 量比加分（缩量见底是左侧信号）
+                if vol_ratio < 0.5:
+                    pre_score += 15  # 极度缩量，地量见底
+                elif vol_ratio < 0.7:
+                    pre_score += 10  # 缩量
+                elif vol_ratio < 1.0:
+                    pre_score += 5   # 轻度缩量
+                elif vol_ratio >= 2.0:
+                    pre_score -= 5   # 放量需要确认，不一定是机会
 
-                # 均线加分
-                if len(ma5) > 0 and closes[-1] > ma5[-1]:
-                    pre_score += 5
-                if len(ma10) > 0 and closes[-1] > ma10[-1]:
-                    pre_score += 5
-                if len(ma20) > 0 and closes[-1] > ma20[-1]:
-                    pre_score += 5
+                # 均线加分（价格在均线下方是左侧信号）
+                if len(ma5) > 0 and closes[-1] < ma5[-1]:
+                    pre_score += 5   # 价格低于MA5，左侧信号
+                if len(ma10) > 0 and closes[-1] < ma10[-1]:
+                    pre_score += 5   # 价格低于MA10
+                if len(ma20) > 0 and closes[-1] < ma20[-1]:
+                    pre_score += 5   # 价格低于MA20，位置较低
 
-                # MACD加分
+                # MACD加分（DIF在0轴下方但即将上穿是左侧信号）
                 if macd_val > 0:
-                    pre_score += 10
+                    pre_score += 0   # 已在0轴上方，右侧信号
                 elif macd_val > -1:
-                    pre_score += 5
+                    pre_score += 10  # DIF在0轴附近，即将金叉
+                elif macd_val > -2:
+                    pre_score += 5   # DIF在0轴下方
 
                 passed.append({
                     "code": code,
@@ -345,6 +533,11 @@ class StockScreener:
                 if df is None:
                     continue
 
+                # 量比过滤：确保成交量活跃（量价配合良好的前提）
+                volume_ratio = item.get("metrics", {}).get("量比", 1.0)
+                if volume_ratio < 1.3:
+                    continue
+
                 # 使用综合战法评估
                 warfare_result = warfare.evaluate(df)
 
@@ -363,16 +556,18 @@ class StockScreener:
                 change_5d = item.get("metrics", {}).get("5日涨幅", 0)
 
                 # 动量加成：近期涨幅大的股票加权
-                # 5日涨幅超过10%额外加10-20分
+                # 5日涨幅超过10%额外加8-30分
                 momentum_bonus = 0
-                if change_5d >= 15:
-                    momentum_bonus = 20
+                if change_5d >= 20:
+                    momentum_bonus = 30
+                elif change_5d >= 15:
+                    momentum_bonus = 25
                 elif change_5d >= 10:
                     momentum_bonus = 15
                 elif change_5d >= 5:
-                    momentum_bonus = 10
+                    momentum_bonus = 8
                 elif change_5d >= 3:
-                    momentum_bonus = 5
+                    momentum_bonus = 3
 
                 # 最终评分 = 基础评分 + 动量加成
                 final_score = base_score + momentum_bonus
@@ -384,6 +579,7 @@ class StockScreener:
                 item["评级"] = composite.get("评级", "B")
                 item["趋势分"] = warfare_result.get("趋势", {}).get("评分", 50)
                 item["动量分"] = warfare_result.get("动量", {}).get("评分", 50)
+                item["左侧分"] = warfare_result.get("左侧", {}).get("评分", 50)
                 item["量价分"] = warfare_result.get("量价", {}).get("评分", 50)
                 item["形态分"] = warfare_result.get("形态", {}).get("评分", 50)
                 item["位置分"] = warfare_result.get("位置", {}).get("评分", 50)
@@ -398,6 +594,15 @@ class StockScreener:
                 # 止盈止损动态依据
                 if signal.get("止盈止损依据"):
                     item["止盈止损依据"] = signal.get("止盈止损依据")
+
+                # 新增：分级和启动信号
+                item["分级"] = signal.get("分级", "")
+                item["仓位建议"] = signal.get("仓位建议", "")
+                item["启动信号"] = signal.get("启动信号", False)
+                item["启动强度"] = signal.get("启动强度", "")
+
+                # 明日买入条件（李成刚核心）
+                item["明日买入条件"] = signal.get("明日买入条件", {})
 
                 # 提取最新价格
                 item["最新价"] = float(df['close'].iloc[-1])
@@ -540,6 +745,115 @@ class StockScreener:
             return (pct >= 9.5).any()
         except:
             return False
+
+    # ==================== 大盘趋势判断（李成刚：顺势而为）====================
+
+    def _get_market_trend(self) -> Dict[str, Any]:
+        """
+        判断大盘趋势（李成刚：顺势而为）
+
+        核心：大盘处于上升趋势时，左侧买入成功率高
+            大盘处于下降趋势时，降低仓位或放弃选股
+        """
+        trend = {
+            "趋势": "震荡",  # 上升/震荡/下降
+            "评分": 50,
+            "建议": "正常选股",
+            "仓位建议": "20%",
+            "原因": []
+        }
+
+        try:
+            # 使用沪深300指数（000300）或上证指数判断大盘
+            index_code = "000300"  # 沪深300
+
+            df = self.fetcher.get_daily(index_code, use_cache=False)
+            if df is None or len(df) < 20:
+                trend["原因"].append("无法获取大盘数据")
+                return trend
+
+            closes = df['close'].astype(float).values
+            pct_changes = df['pct_change'].astype(float).values if 'pct_change' in df.columns else np.diff(closes) / closes[:-1] * 100
+
+            # 计算各项指标
+            ma5 = np.mean(closes[-5:])
+            ma20 = np.mean(closes[-20:])
+
+            current_price = closes[-1]
+            change_5d = (closes[-1] - closes[-6]) / closes[-6] * 100 if len(closes) >= 6 else 0
+            change_20d = (closes[-1] - closes[-21]) / closes[-21] * 100 if len(closes) >= 21 else 0
+
+            # ============ 判断趋势 ============
+            score = 50  # 基础分
+
+            # 1. 均线判断
+            if ma5 > ma20:
+                score += 20
+                trend["原因"].append("均线多头（5日>20日）")
+            elif ma5 < ma20:
+                score -= 10
+                trend["原因"].append("均线空头（5日<20日）")
+
+            # 2. 价格位置
+            if current_price > ma20:
+                score += 15
+                trend["原因"].append("价格在20日均线上方")
+            else:
+                score -= 15
+                trend["原因"].append("价格在20日均线下方")
+
+            # 3. 近期涨跌
+            if change_5d > 3:
+                score += 15
+                trend["原因"].append(f"5日涨幅{change_5d:.1f}%")
+            elif change_5d < -3:
+                score -= 15
+                trend["原因"].append(f"5日跌幅{abs(change_5d):.1f}%")
+
+            if change_20d > 5:
+                score += 15
+                trend["原因"].append(f"20日涨幅{change_20d:.1f}%")
+            elif change_20d < -5:
+                score -= 15
+                trend["原因"].append(f"20日跌幅{abs(change_20d):.1f}%")
+
+            trend["评分"] = max(0, min(100, score))
+
+            # ============ 确定趋势和仓位建议 ============
+            if score >= 60:  # 上升趋势
+                trend["趋势"] = "上升"
+                trend["建议"] = "积极选股，左侧买入成功率高"
+                trend["仓位建议"] = "正常仓位（20-30%）"
+            elif score >= 40:  # 震荡趋势
+                trend["趋势"] = "震荡"
+                trend["建议"] = "精选个股，控制仓位"
+                trend["仓位建议"] = "轻仓（10-20%）"
+            else:  # 下降趋势
+                trend["趋势"] = "下降"
+                trend["建议"] = "减少选股，多看少动"
+                trend["仓位建议"] = "极轻仓（5-10%）或空仓"
+
+        except Exception as e:
+            logger.warning(f"大盘趋势判断失败: {e}")
+            trend["原因"].append(f"判断失败: {str(e)}")
+
+        return trend
+
+    # ==================== 大盘过滤后的选股数量限制 ====================
+
+    def _get_position_limit(self, market_trend: Dict[str, Any], base_limit: int = 20) -> int:
+        """
+        根据大盘趋势调整选股数量
+        李成刚：下降趋势时减少选股
+        """
+        trend = market_trend.get("趋势", "震荡")
+
+        if trend == "上升":
+            return base_limit  # 正常数量
+        elif trend == "震荡":
+            return int(base_limit * 0.6)  # 减少40%
+        else:  # 下降
+            return int(base_limit * 0.3)  # 减少70%
 
 
 # 单例

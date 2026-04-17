@@ -23,33 +23,49 @@ from config import MONITOR_FILE, ALERTS_FILE
 
 def cmd_screener(args):
     """选股命令"""
+    # 判断是否实时模式: --realtime强制实时, --full强制完整, 默认自动判断
+    if args.full:
+        realtime_mode = False
+        mode_str = "【完整模式】"
+    elif args.realtime:
+        realtime_mode = True
+        mode_str = "【实时模式】"
+    else:
+        # 自动判断
+        from data_fetcher import get_fetcher
+        fetcher = get_fetcher()
+        is_open = fetcher.is_market_open()
+        realtime_mode = None  # 传None让screener自动判断
+        mode_str = "【自动】"
+
     print(f"\n{'='*50}")
-    print(f"开始选股筛选...")
+    print(f"开始选股筛选... {mode_str}")
     print(f"{'='*50}\n")
 
     screener = get_screener()
-    results = screener.screen(market=args.market, limit=args.limit)
+    results = screener.screen(market=args.market, limit=args.limit, realtime=realtime_mode)
 
     if not results:
         print("未筛选出符合条件的股票")
         return
 
-    print(f"\n筛选结果（共{len(results)}只，按评分排序）：\n")
-    print(f"{'代码':<10} {'名称/价格':<12} {'涨跌幅':<10} {'总分':<8} {'技术分':<8} {'基本面':<8} {'情绪分':<8}")
-    print("-" * 100)
+    # 检查是否为实时模式
+    first_realtime = results[0].get('实时模式', False) if results else False
+
+    print(f"\n筛选结果（共{len(results)}只，按评分排序）{'(实时数据)' if first_realtime else ''}：\n")
     print(f"{'代码':<10} {'评级':<6} {'信号':<8} {'总分':<6} {'趋势':<6} {'动量':<6} {'量价':<6} {'形态':<6} {'情绪':<6}")
     print("-" * 100)
 
     for i, stock in enumerate(results[:args.limit], 1):
-        code = stock.get('code', '')
+        code = stock.get('代码', '') or stock.get('code', '')
         rating = stock.get('评级', 'B')
         signal = stock.get('信号', '持有')
         total = stock.get('总分', 0)
-        trend = stock.get('趋势分', 0)
-        momentum = stock.get('动量分', 0)
-        vol_price = stock.get('量价分', 0)
-        pattern = stock.get('形态分', 0)
-        sentiment = stock.get('情绪分', 0)
+        trend = stock.get('趋势', 0) or stock.get('趋势分', 0)
+        momentum = stock.get('动量', 0) or stock.get('动量分', 0)
+        vol_price = stock.get('量价', 0) or stock.get('量价分', 0)
+        pattern = stock.get('形态', 0) or stock.get('形态分', 0)
+        sentiment = stock.get('情绪', 0) or stock.get('情绪分', 0)
 
         print(f"{code:<10} {rating:<6} {signal:<8} {total:<6.1f} {trend:<6.1f} {momentum:<6.1f} {vol_price:<6.1f} {pattern:<6.1f} {sentiment:<6.1f}")
 
@@ -57,8 +73,14 @@ def cmd_screener(args):
 
     # 保存结果到文件
     tracker = get_tracker()
-    tracker.add_weekly_watchlist(results)  # 保存到 View Results/出击.txt
+    tracker.add_weekly_watchlist(results)  # 保存到 View Results/出击.txt（含持仓检查）
     tracker.save_weekly_watchlist(results)  # 保存到 View Results/weekly_watchlist.txt
+
+    # 先打印持仓检查报告（使用最新数据）
+    holding_report = tracker.get_holding_report()
+    print("\n" + holding_report)
+
+    # 再生成出击报告（持仓股票信号已包含在出击.txt中）
     tracker.save_report()  # 保存到 View Results/出击.报告.txt
 
     # 过滤加仓股票单独记录
@@ -361,6 +383,8 @@ def main():
     parser_screener.add_argument("--market", "-m", default="全市场", help="市场范围")
     parser_screener.add_argument("--limit", "-l", type=int, default=20, help="返回数量")
     parser_screener.add_argument("--output", "-o", help="结果保存路径")
+    parser_screener.add_argument("--realtime", "-r", action="store_true", help="使用实时模式（盘中选股）")
+    parser_screener.add_argument("--full", "-f", action="store_true", help="使用完整模式（盘后选股，等同于默认）")
 
     # 分析命令
     parser_analyze = subparsers.add_parser("analyze", help="分析股票")
