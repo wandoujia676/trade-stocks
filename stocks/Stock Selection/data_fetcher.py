@@ -621,6 +621,71 @@ class DataFetcher:
 
         return df
 
+    def get_realtime_spot(self, code: str) -> Dict[str, Any]:
+        """
+        获取单只股票实时行情（使用新浪/腾讯接口）
+
+        Args:
+            code: 股票代码，如 '600519'
+
+        Returns:
+            dict: {
+                'code': '600519',
+                'name': '贵州茅台',
+                'current': 1443.31,
+                'change': -10.65,
+                'pct_chg': -0.73,
+                'volume': 2521364,
+                'amount': 0,
+                'high': 1446.5,
+                'low': 1433.0,
+                'open': 1444.0,
+                'close_prev': 1453.96,
+                'update_time': '2026-04-13 15:00:01',
+                'source': 'sina'
+            }
+        """
+        # 导入放在函数内避免循环导入
+        try:
+            from realtime_fetcher import get_realtime_fetcher
+            fetcher = get_realtime_fetcher()
+            return fetcher.get_spot_single(code)
+        except Exception as e:
+            logger.error(f"获取实时行情失败: {e}")
+            return {}
+
+    def get_realtime_batch(self, codes: List[str]) -> pd.DataFrame:
+        """
+        批量获取实时行情
+
+        Args:
+            codes: 股票代码列表
+
+        Returns:
+            DataFrame with realtime data for all codes
+        """
+        try:
+            from realtime_fetcher import get_realtime_fetcher
+            fetcher = get_realtime_fetcher()
+            return fetcher.get_spot(codes)
+        except Exception as e:
+            logger.error(f"批量获取实时行情失败: {e}")
+            return pd.DataFrame()
+
+    def is_market_open(self) -> bool:
+        """
+        判断当前是否在交易时间
+
+        Returns:
+            True if market is open (09:30-11:30, 13:00-15:00 on weekdays)
+        """
+        try:
+            from realtime_fetcher import get_realtime_fetcher
+            fetcher = get_realtime_fetcher()
+            return fetcher.is_market_open()
+        except Exception:
+            return False
+
 
 # 单例
 _fetcher_instance = None

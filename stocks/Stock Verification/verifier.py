@@ -11,6 +11,7 @@ from pathlib import Path
 
 # 全局 auto 模式标记
 AUTO_MODE = False
+FORCE_MODE = False
 
 # 添加父目录到路径，以便导入 Stock Selection 模块
 import importlib.util
@@ -42,11 +43,12 @@ VER_REPORT_FILE = BASE_DIR / "ver.txt"
 # 战法维度权重配置
 DEFAULT_WEIGHTS = {
     "趋势": 0.25,
-    "动量": 0.20,
-    "量价": 0.20,
+    "动量": 0.15,
+    "左侧": 0.15,
+    "量价": 0.15,
     "形态": 0.15,
     "位置": 0.10,
-    "情绪": 0.10,
+    "情绪": 0.05,
 }
 
 # 权重调整阈值
@@ -60,6 +62,7 @@ WEIGHT_MIN = 0.15
 DIMENSION_KEYWORDS = {
     "趋势": ["均线多头", "MA多头", "上升趋势", "均线多头排列", "多头排列"],
     "动量": ["MACD强势", "MACD金叉", "MACD走强", "动量强", "KDJ金叉"],
+    "左侧": ["超跌", "RSI", "左侧", "BOLL下轨", "负乖离", "左侧买入", "左侧超跌反弹"],
     "量价": ["放量", "量比放大", "缩量", "量价配合", "持续放量"],
     "形态": ["突破新高", "锤子线", "大阳线", "早晨之星", "K线形态", "突破"],
     "位置": ["BOLL", "boll", "位置", "上轨", "下轨", "中轨"],
@@ -458,13 +461,15 @@ def run_verification():
         logger.error("未找到选股数据文件")
         return
 
-    # 检查选股日期（自动模式下已检测到新内容则跳过日期检查）
+    # 检查选股日期（自动模式或强制模式跳过日期检查）
     picks_date = picks_data.get("最后更新", "")
-    if not new_picks_detected:
+    if not new_picks_detected and not FORCE_MODE:
         today = datetime.now().strftime("%Y-%m-%d")
         yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
 
-        if picks_date not in [yesterday, today]:
+        # picks_date 可能是 "2026-04-15 15:22:05" 格式，提取日期部分比较
+        picks_date_only = picks_date[:10] if len(picks_date) >= 10 else picks_date
+        if picks_date_only not in [yesterday, today]:
             logger.info(f"选股日期为 {picks_date}，今日 {today}，暂无待验证数据")
             print(f"暂无待验证数据（选股日期: {picks_date}）")
             return
@@ -601,15 +606,17 @@ def show_history():
 
 
 def main():
-    global AUTO_MODE
+    global AUTO_MODE, FORCE_MODE
     parser = argparse.ArgumentParser(description="选股验证系统")
     parser.add_argument("--feedback", action="store_true", help="执行权重优化")
     parser.add_argument("--report", action="store_true", help="显示报告")
     parser.add_argument("--history", action="store_true", help="显示历史")
     parser.add_argument("--auto", action="store_true", help="自动模式：有更新才验证")
+    parser.add_argument("--force", action="store_true", help="强制验证（忽略日期检查）")
 
     args = parser.parse_args()
     AUTO_MODE = args.auto
+    FORCE_MODE = args.force
 
     if args.report:
         show_report()
