@@ -72,6 +72,17 @@ python stocks/Stock Selection/cli.py monitor list
 python stocks/Stock Selection/cli.py monitor check
 ```
 
+### News/Sentiment commands (小金库 6.4)
+```bash
+python stocks/Stock Selection/cli.py news general              # 市场快讯
+python stocks/Stock Selection/cli.py news stock <code>        # 个股新闻
+python stocks/Stock Selection/cli.py news sentiment <code>   # 情绪分析
+python stocks/Stock Selection/cli.py announcement            # 今日公告
+python stocks/Stock Selection/cli.py announcement --symbol <code>  # 个股公告
+python stocks/Stock Selection/cli.py limit-up --type up      # 涨停原因追踪
+python stocks/Stock Selection/cli.py limit-up --type down    # 跌停原因追踪
+```
+
 ### Auto-screening (scheduled tasks)
 ```bash
 python stocks/Stock Selection/auto_screener.py        # weekly (Wed 14:00)
@@ -82,7 +93,7 @@ python stocks/Stock Selection/auto_candidate_pool.py # monthly (15th, 28th 14:00
 
 Core principle: Buy at divergence, sell at consensus. Identify stocks before significant rallies and wait for rebounds or reversals.
 
-### Seven-Dimension Scoring System (小金库 5.1)
+### Seven-Dimension Scoring System (小金库 6.4)
 
 | Dimension | Weight | Left-Side Core Signals |
 |-----------|--------|------------------------|
@@ -92,7 +103,7 @@ Core principle: Buy at divergence, sell at consensus. Identify stocks before sig
 | 趋势 (Trend) | 25% | MA convergence/accumulation, downtrend收敛 → about to turn up |
 | 形态 (Pattern) | 15% | Hammer line, morning star pattern |
 | 位置 (Position) | 10% | Low position, near BOLL lower rail |
-| 情绪 (Sentiment) | 5% | Limit-up gene, oversold |
+| 情绪 (Sentiment) | 5% | Limit-up gene, oversold + 消息面情绪 (利好/利空) |
 
 ### Left-Side Breakout Signals
 
@@ -115,7 +126,7 @@ Stock qualifies as "left-side breakout" when ANY condition is met:
 ## Key Files
 
 - `stocks/Stock Selection/config.py` - Tushare token and data source config
-- `stocks/Stock Selection/data_fetcher.py` - Unified data fetching (Tushare/AKShare/Baostock)
+- `stocks/Stock Selection/data_fetcher.py` - Unified data fetching (Tushare/AKShare/Baostock) + NewsFetcher (消息面)
 - `stocks/Stock Selection/realtime_fetcher.py` - Real-time quotes (Sina/QQ APIs)
 - `stocks/Stock Selection/screener.py` - Pure left-side screening engine
 - `stocks/Stock Selection/warfare.py` - Left-side scoring (completely rewritten in 5.1)

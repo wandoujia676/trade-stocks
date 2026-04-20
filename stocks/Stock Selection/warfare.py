@@ -396,7 +396,23 @@ class ComprehensiveWarfare:
             # 空头排列，下降趋势
             score -= 15
             details["均线状态"] = "空头排列"
-            details["蓄势信号"] = "下降趋势，等待反转"
+
+            # 检查是否在创新低
+            lows = df['low'].astype(float).values
+            recent_lows = lows[-10:-1]  # 前9天最低价
+            current_low = lows[-1]
+            lowest_recent = np.min(recent_lows)
+
+            if current_low <= lowest_recent:
+                # 今日创近期新低：下降趋势延续
+                score -= 10
+                details["蓄势信号"] = "下降趋势延续，创新低"
+                details["空头信号"] = "价格创新低，严格过滤"
+            else:
+                # 价格未创新低：可能有企稳迹象
+                score += 5
+                details["蓄势信号"] = "未创新低，可能企稳"
+                details["空头信号"] = "低位企稳观察"
         else:
             # 均线纠缠（横盘整理）
             ma_spread = abs(ma5 - ma10) / ma10 * 100 if ma10 > 0 else 0
@@ -620,11 +636,29 @@ class ComprehensiveWarfare:
             if vol_ratio > 1.3 and pct_change > 0:
                 score += 10
                 details["量价配合"] = "量价配合良好"
+            elif vol_ratio < 0.8 and pct_change < -1:
+                # 缩量下跌：抛压不大但无量可能是陷阱
+                score -= 10
+                details["量价配合"] = "缩量下跌（弱势）"
             elif vol_ratio < 0.7 and pct_change < 0:
-                score += 5
-                details["量价配合"] = "缩量调整（健康）"
+                # 缩量下跌：筹码锁定但方向不明
+                score -= 5
+                details["量价配合"] = "缩量调整（观望）"
             elif vol_ratio > 1.5 and pct_change < 0:
                 details["量价配合"] = "量价背离（警惕）"
+
+            # ============ 均线空头排列 + 缩量 = 陷阱信号 ============
+            ma5 = np.mean(closes[-5:])
+            ma10 = np.mean(closes[-10:])
+            ma20 = np.mean(closes[-20:])
+            current_price = closes[-1]
+
+            # 均线空头排列（空头趋势中）
+            if ma5 < ma10 < ma20:
+                if vol_ratio < 1.0:
+                    # 空头排列 + 缩量 = 无量反弹难持续
+                    score -= 15
+                    details["空头缩量警告"] = "均线空头排列+缩量，反弹难持续"
 
         except Exception as e:
             logger.warning(f"量价评估异常: {e}")
@@ -1347,6 +1381,22 @@ class ComprehensiveWarfare:
                 total_score += 10
             elif strength == "中等":
                 total_score += 5
+
+        # ============ 弱势股票过滤机制 ============
+        # 检查是否有空头排列+缩量警告
+        vol_price = result.get("量价", {})
+        if vol_price.get("详情", {}).get("空头缩量警告"):
+            total_score -= 15
+            result["警告"] = "空头排列+缩量，反弹难持续"
+
+        # 检查趋势维度是否有空头创新低
+        trend = result.get("趋势", {})
+        if trend.get("详情", {}).get("空头信号") == "价格创新低，严格过滤":
+            total_score -= 10
+            if result.get("警告"):
+                result["警告"] += " + 创新低"
+            else:
+                result["警告"] = "价格创新低"
 
         # 限制评分范围
         total_score = max(0, min(100, total_score))

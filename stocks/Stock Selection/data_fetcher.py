@@ -696,3 +696,391 @@ def get_fetcher() -> DataFetcher:
     if _fetcher_instance is None:
         _fetcher_instance = DataFetcher()
     return _fetcher_instance
+
+
+# ==================== 消息面数据获取器 ====================
+
+class NewsFetcher:
+    """
+    消息面数据获取器 - AKShare免费接口
+    支持：实时新闻、公告、涨跌停原因
+    """
+
+    def __init__(self):
+        self.api = None
+        self._init_api()
+        self.cache = DataCache()
+
+    def _init_api(self):
+        """初始化AKShare接口"""
+        try:
+            import akshare as ak
+            self.api = ak
+        except ImportError:
+            logger.warning("AKShare未安装，消息面功能不可用")
+
+    def is_available(self) -> bool:
+        return self.api is not None
+
+    def get_general_news(self, limit: int = 50) -> pd.DataFrame:
+        """
+        获取A股市场快讯
+
+        Returns:
+            DataFrame: [关键词, 股票代码, 股票名称, 发布时间, 新闻来源, 新闻内容]
+        """
+        cache_key = f"news_general_{limit}"
+        cached = self.cache.get(cache_key, max_age_minutes=5)  # 新闻5分钟缓存
+        if cached is not None and not cached.empty:
+            return cached
+
+        if not self.is_available():
+            logger.warning("AKShare不可用，无法获取新闻")
+            return pd.DataFrame()
+
+        try:
+            # stock_news_em 需要传入股票代码，这里用大盘指数演示
+            # 返回最新发布的市场/行业新闻
+            df = self.api.stock_news_main_cx()
+            if df is not None and not df.empty:
+                # 统一列名
+                rename_map = {
+                    '关键词': 'keyword',
+                    '股票代码': 'ts_code',
+                    '股票名称': 'name',
+                    '发布时间': 'pub_time',
+                    '新闻来源': 'source',
+                    '新闻内容': 'content'
+                }
+                df = df.rename(columns=rename_map)
+                df = df.head(limit)
+                self.cache.set(cache_key, df)
+                logger.info(f"获取到 {len(df)} 条市场快讯")
+                return df
+        except Exception as e:
+            logger.error(f"获取市场快讯失败: {e}")
+
+        return pd.DataFrame()
+
+    def get_stock_news(self, symbol: str) -> pd.DataFrame:
+        """
+        获取个股新闻
+
+        Args:
+            symbol: 股票代码，如 '000001'
+
+        Returns:
+            DataFrame: [关键词, 股票代码, 股票名称, 发布时间, 新闻来源, 新闻内容]
+        """
+        cache_key = f"news_stock_{symbol}"
+        cached = self.cache.get(cache_key, max_age_minutes=10)  # 个股新闻10分钟缓存
+        if cached is not None and not cached.empty:
+            return cached
+
+        if not self.is_available():
+            return pd.DataFrame()
+
+        try:
+            # 去除后缀
+            symbol = symbol.replace(".sh", "").replace(".sz", "").replace(".SH", "").replace(".SZ", "")
+            df = self.api.stock_news_em(symbol=symbol)
+            if df is not None and not df.empty:
+                rename_map = {
+                    '关键词': 'keyword',
+                    '股票代码': 'ts_code',
+                    '股票名称': 'name',
+                    '发布时间': 'pub_time',
+                    '新闻来源': 'source',
+                    '新闻内容': 'content'
+                }
+                df = df.rename(columns=rename_map)
+                self.cache.set(cache_key, df)
+                logger.info(f"获取股票 {symbol} 新闻 {len(df)} 条")
+                return df
+        except Exception as e:
+            logger.error(f"获取个股新闻失败 {symbol}: {e}")
+
+        return pd.DataFrame()
+
+    def get_announcement(self, symbol: str = None, date: str = None, limit: int = 100) -> pd.DataFrame:
+        """
+        获取个股公告
+
+        Args:
+            symbol: 股票代码，如 '000001'，None则获取所有
+            date: 日期，格式 YYYYMMDD，默认今日
+            limit: 返回条数
+
+        Returns:
+            DataFrame: [代码, 名称, 公告类型, 公告时间, 公告标题, 地址]
+        """
+        if date is None:
+            date = datetime.now().strftime("%Y%m%d")
+
+        cache_key = f"ann_{symbol}_{date}_{limit}"
+        cached = self.cache.get(cache_key, max_age_minutes=30)  # 公告30分钟缓存
+        if cached is not None and not cached.empty:
+            return cached
+
+        if not self.is_available():
+            return pd.DataFrame()
+
+        try:
+            if symbol:
+                # 个股公告
+                symbol = symbol.replace(".sh", "").replace(".sz", "").replace(".SH", "").replace(".SZ", "")
+                df = self.api.stock_notice_report(symbol=symbol, date=date)
+            else:
+                # 获取全市场公告
+                df = self.api.stock_notice_report(date=date)
+
+            if df is not None and not df.empty:
+                # 统一列名
+                rename_map = {
+                    '代码': 'ts_code',
+                    '名称': 'name',
+                    '公告类型': 'ann_type',
+                    '公告时间': 'ann_time',
+                    '公告标题': 'title',
+                    '地址': 'url'
+                }
+                df = df.rename(columns=rename_map)
+                df = df.head(limit)
+                self.cache.set(cache_key, df)
+                logger.info(f"获取公告 {len(df)} 条")
+                return df
+        except Exception as e:
+            logger.error(f"获取公告失败: {e}")
+
+        return pd.DataFrame()
+
+    def get_limit_up_reason(self, trade_date: str = None) -> pd.DataFrame:
+        """
+        获取涨停原因
+
+        Args:
+            trade_date: 交易日期，格式 YYYYMMDD，默认今日
+
+        Returns:
+            DataFrame: [序号, 代码, 名称, 涨停时间, 涨停封板时间, 涨停统计, 涨停原因, 流通市值, 预测明天]
+        """
+        if trade_date is None:
+            trade_date = datetime.now().strftime("%Y%m%d")
+
+        cache_key = f"limit_up_{trade_date}"
+        cached = self.cache.get(cache_key, max_age_minutes=15)  # 涨停原因15分钟缓存
+        if cached is not None and not cached.empty:
+            return cached
+
+        if not self.is_available():
+            return pd.DataFrame()
+
+        try:
+            df = self.api.stock_tfp_em(date=trade_date)
+            if df is not None and not df.empty:
+                # 统一列名 - 基于实际API返回的列名
+                rename_map = {
+                    '序号': 'seq',
+                    '代码': 'ts_code',
+                    '名称': 'name',
+                    '涨停时间': 'limit_time',
+                    '涨停封板时间': 'seal_time',
+                    '涨停统计': 'limit_stat',
+                    '涨停原因': 'reason',
+                    '流通市值': 'mkt_cap',
+                    '预测明天': 'predict'
+                }
+                df = df.rename(columns=rename_map)
+                self.cache.set(cache_key, df)
+                logger.info(f"获取涨停股票 {len(df)} 只")
+                return df
+        except Exception as e:
+            logger.error(f"获取涨停原因失败: {e}")
+
+        return pd.DataFrame()
+
+    def get_limit_down_reason(self, trade_date: str = None) -> pd.DataFrame:
+        """
+        获取跌停原因
+
+        Args:
+            trade_date: 交易日期，格式 YYYYMMDD，默认今日
+
+        Returns:
+            DataFrame: 同涨停原因
+        """
+        if trade_date is None:
+            trade_date = datetime.now().strftime("%Y%m%d")
+
+        cache_key = f"limit_down_{trade_date}"
+        cached = self.cache.get(cache_key, max_age_minutes=15)
+        if cached is not None and not cached.empty:
+            return cached
+
+        if not self.is_available():
+            return pd.DataFrame()
+
+        try:
+            df = self.api.stock_tfp_em(date=trade_date, statue="down")
+            if df is not None and not df.empty:
+                rename_map = {
+                    '序号': 'seq',
+                    '代码': 'ts_code',
+                    '名称': 'name',
+                    '涨停时间': 'limit_time',
+                    '涨停封板时间': 'seal_time',
+                    '涨停统计': 'limit_stat',
+                    '涨停原因': 'reason',
+                    '流通市值': 'mkt_cap',
+                    '预测明天': 'predict'
+                }
+                df = df.rename(columns=rename_map)
+                self.cache.set(cache_key, df)
+                logger.info(f"获取跌停股票 {len(df)} 只")
+                return df
+        except Exception as e:
+            logger.error(f"获取跌停原因失败: {e}")
+
+        return pd.DataFrame()
+
+    def get_hot_stocks(self, limit: int = 50) -> pd.DataFrame:
+        """
+        获取热门股票
+
+        Args:
+            limit: 返回条数
+
+        Returns:
+            DataFrame: [股票代码, 股票名称, 涨跌幅, 热度排名, 原因]
+        """
+        cache_key = f"hot_stocks_{limit}"
+        cached = self.cache.get(cache_key, max_age_minutes=5)
+        if cached is not None and not cached.empty:
+            return cached
+
+        if not self.is_available():
+            return pd.DataFrame()
+
+        try:
+            df = self.api.stock_hot_up_em()
+            if df is not None and not df.empty:
+                df = df.head(limit)
+                self.cache.set(cache_key, df)
+                logger.info(f"获取热门股票 {len(df)} 只")
+                return df
+        except Exception as e:
+            logger.error(f"获取热门股票失败: {e}")
+
+        return pd.DataFrame()
+
+    def analyze_sentiment(self, symbol: str) -> Dict[str, Any]:
+        """
+        分析个股消息面情绪
+
+        Args:
+            symbol: 股票代码
+
+        Returns:
+            dict: {
+                'score': 情绪评分 0-100,
+                'signal': '利好'/'利空'/'中性',
+                'news_count': 新闻数量,
+                'ann_count': 公告数量,
+                'limit_up': 是否涨停,
+                'keywords': [利好关键词列表],
+                'risk_keywords': [风险关键词列表],
+                'summary': '综合摘要'
+            }
+        """
+        result = {
+            'score': 50,  # 基础分
+            'signal': '中性',
+            'news_count': 0,
+            'ann_count': 0,
+            'limit_up': False,
+            'keywords': [],
+            'risk_keywords': [],
+            'summary': ''
+        }
+
+        # 利好/利空关键词
+        positive_keywords = ['业绩预增', '大幅增长', '订单', '合作', '突破', '中标', '研发',
+                           '产能扩张', '市场份额', '政策支持', '战略', '增持', '回购', '转型']
+        negative_keywords = ['业绩预减', '大幅下降', '亏损', '减持', '诉讼', '监管', '问询',
+                            '风险提示', '终止', '违规', '减持', '商誉减值', '应收账款']
+
+        # 1. 获取个股新闻
+        news_df = self.get_stock_news(symbol)
+        if news_df is not None and not news_df.empty:
+            result['news_count'] = len(news_df)
+            # 关键词统计
+            all_content = ' '.join(news_df.get('content', '').astype(str).tolist())
+            for kw in positive_keywords:
+                if kw in all_content:
+                    result['keywords'].append(kw)
+                    result['score'] += 5
+            for kw in negative_keywords:
+                if kw in all_content:
+                    result['risk_keywords'].append(kw)
+                    result['score'] -= 8
+
+        # 2. 获取公告
+        try:
+            ann_df = self.get_announcement(symbol=symbol)
+            if ann_df is not None and not ann_df.empty:
+                result['ann_count'] = len(ann_df)
+                # 检查公告标题
+                titles = ' '.join(ann_df.get('title', ann_df.get('ann_type', '')).astype(str).tolist())
+                for kw in positive_keywords:
+                    if kw in titles:
+                        result['keywords'].append(f"[公告]{kw}")
+                        result['score'] += 8  # 公告权重更高
+                for kw in negative_keywords:
+                    if kw in titles:
+                        result['risk_keywords'].append(f"[公告]{kw}")
+                        result['score'] -= 12
+        except Exception as e:
+            logger.debug(f"获取公告失败: {e}")
+
+        # 3. 检查是否涨停
+        today = datetime.now().strftime("%Y%m%d")
+        limit_df = self.get_limit_up_reason(trade_date=today)
+        if limit_df is not None and not limit_df.empty:
+            symbol_clean = symbol.replace(".sh", "").replace(".sz", "").replace(".SH", "").replace(".SZ", "")
+            for _, row in limit_df.iterrows():
+                code = str(row.get('ts_code', '')).replace(".sh", "").replace(".sz", "").replace(".SH", "").replace(".SZ", "")
+                if symbol_clean in code:
+                    result['limit_up'] = True
+                    result['score'] += 20
+                    result['keywords'].append(f"涨停({row.get('reason', '')})")
+                    break
+
+        # 限制分数范围
+        result['score'] = max(0, min(100, result['score']))
+
+        # 判断信号
+        if result['score'] >= 65:
+            result['signal'] = '利好'
+        elif result['score'] <= 35:
+            result['signal'] = '利空'
+        else:
+            result['signal'] = '中性'
+
+        # 生成摘要
+        if result['keywords'] or result['risk_keywords']:
+            result['summary'] = f"发现 {len(result['keywords'])} 个利好因素, {len(result['risk_keywords'])} 个风险因素"
+        else:
+            result['summary'] = "无明显利好/利空信号"
+
+        return result
+
+
+# 单例
+_news_fetcher_instance = None
+
+def get_news_fetcher() -> NewsFetcher:
+    """获取消息面数据获取器单例"""
+    global _news_fetcher_instance
+    if _news_fetcher_instance is None:
+        _news_fetcher_instance = NewsFetcher()
+    return _news_fetcher_instance

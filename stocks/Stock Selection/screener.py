@@ -11,7 +11,7 @@ import pandas as pd
 import numpy as np
 
 from config import SCREENER_DEFAULTS, SECTOR_MAP
-from data_fetcher import get_fetcher
+from data_fetcher import get_fetcher, get_news_fetcher
 from warfare import get_warfare
 
 logger = logging.getLogger(__name__)
@@ -520,11 +520,14 @@ class StockScreener:
 
     def _score_stocks(self, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        多因素评分（使用综合战法 + 动量加权）
+        多因素评分（使用综合战法 + 动量加权 + 消息面情绪）
 
         优化：加入动量加权，让近期涨幅大的股票更容易被选出
+        新增：整合消息面情绪分析
         """
         warfare = get_warfare()
+        news_fetcher = get_news_fetcher()
+        news_available = news_fetcher.is_available()
 
         scored = []
         for item in candidates:
@@ -569,13 +572,49 @@ class StockScreener:
                 elif change_5d >= 3:
                     momentum_bonus = 3
 
-                # 最终评分 = 基础评分 + 动量加成
-                final_score = base_score + momentum_bonus
+                # ========== 消息面情绪加权 (小金库 6.4) ==========
+                sentiment_bonus = 0
+                sentiment_signal = "无"
+                sentiment_keywords = []
+                risk_keywords = []
+
+                if news_available:
+                    try:
+                        code = item.get("code", "")
+                        sentiment_result = news_fetcher.analyze_sentiment(code)
+                        sentiment_score = sentiment_result.get("score", 50)
+                        sentiment_signal = sentiment_result.get("signal", "中性")
+                        sentiment_keywords = sentiment_result.get("keywords", [])[:5]
+                        risk_keywords = sentiment_result.get("risk_keywords", [])[:5]
+
+                        # 情绪评分映射到加成
+                        # 利好(65+) 加分，利空(35-)减分
+                        if sentiment_score >= 65:
+                            sentiment_bonus = 15
+                        elif sentiment_score >= 60:
+                            sentiment_bonus = 10
+                        elif sentiment_score >= 55:
+                            sentiment_bonus = 5
+                        elif sentiment_score <= 35:
+                            sentiment_bonus = -15
+                        elif sentiment_score <= 40:
+                            sentiment_bonus = -10
+                        elif sentiment_score <= 45:
+                            sentiment_bonus = -5
+                    except Exception as e:
+                        logger.debug(f"消息面分析失败 {item.get('code')}: {e}")
+
+                # 最终评分 = 基础评分 + 动量加成 + 情绪加成
+                final_score = base_score + momentum_bonus + sentiment_bonus
 
                 # 提取战法各维度评分
                 item["总分"] = final_score
                 item["基础分"] = base_score
                 item["动量加成"] = momentum_bonus
+                item["情绪加成"] = sentiment_bonus
+                item["情绪信号"] = sentiment_signal
+                item["情绪关键词"] = sentiment_keywords
+                item["风险关键词"] = risk_keywords
                 item["评级"] = composite.get("评级", "B")
                 item["趋势分"] = warfare_result.get("趋势", {}).get("评分", 50)
                 item["动量分"] = warfare_result.get("动量", {}).get("评分", 50)

@@ -374,6 +374,199 @@ def cmd_realtime(args):
     print()
 
 
+def cmd_news(args):
+    """消息面命令"""
+    from data_fetcher import get_news_fetcher
+
+    news_fetcher = get_news_fetcher()
+
+    if not news_fetcher.is_available():
+        print("AKShare未安装，消息面功能不可用")
+        print("请运行: pip install akshare")
+        return
+
+    if args.subcommand == "general":
+        # 市场快讯
+        print(f"\n{'='*60}")
+        print(f"A股市场快讯")
+        print(f"{'='*60}\n")
+
+        df = news_fetcher.get_general_news(limit=args.limit)
+
+        if df is None or df.empty:
+            print("暂无数据")
+            return
+
+        print(f"共 {len(df)} 条快讯：\n")
+        for i, row in df.head(args.limit).iterrows():
+            title = row.get('title', row.get('标题', ''))
+            pub_time = row.get('pub_time', row.get('发布时间', ''))
+            source = row.get('source', row.get('来源', ''))
+            content = str(row.get('content', row.get('内容', '')))[:100]
+
+            print(f"【{pub_time}】{title}")
+            if content and content != 'nan':
+                print(f"   {content}...")
+            print()
+
+    elif args.subcommand == "stock":
+        # 个股新闻
+        symbol = args.symbol.strip()
+        print(f"\n{'='*60}")
+        print(f"个股新闻: {symbol}")
+        print(f"{'='*60}\n")
+
+        df = news_fetcher.get_stock_news(symbol)
+
+        if df is None or df.empty:
+            print("暂无数据")
+            return
+
+        print(f"共 {len(df)} 条新闻：\n")
+        for i, row in df.iterrows():
+            title = row.get('title', row.get('标题', ''))
+            pub_time = row.get('pub_time', row.get('发布时间', ''))
+            content = str(row.get('content', row.get('内容', '')))[:150]
+
+            print(f"【{pub_time}】{title}")
+            if content and content != 'nan':
+                print(f"   {content}...")
+            print()
+
+    elif args.subcommand == "sentiment":
+        # 情绪分析
+        symbol = args.symbol.strip()
+        print(f"\n{'='*60}")
+        print(f"消息面情绪分析: {symbol}")
+        print(f"{'='*60}\n")
+
+        result = news_fetcher.analyze_sentiment(symbol)
+
+        print(f"情绪评分: {result['score']}/100")
+        print(f"信号: 【{result['signal']}】")
+        print(f"新闻数量: {result['news_count']}")
+        print(f"公告数量: {result['ann_count']}")
+        print(f"涨停: {'是 ✓' if result['limit_up'] else '否'}")
+
+        if result['keywords']:
+            print(f"\n利好因素 ({len(result['keywords'])}):")
+            for kw in result['keywords'][:10]:
+                print(f"  ✓ {kw}")
+
+        if result['risk_keywords']:
+            print(f"\n风险因素 ({len(result['risk_keywords'])}):")
+            for kw in result['risk_keywords'][:10]:
+                print(f"  ✗ {kw}")
+
+        print(f"\n摘要: {result['summary']}")
+        print()
+
+
+def cmd_announcement(args):
+    """公告命令"""
+    from data_fetcher import get_news_fetcher
+
+    news_fetcher = get_news_fetcher()
+
+    if not news_fetcher.is_available():
+        print("AKShare未安装，公告功能不可用")
+        return
+
+    symbol = args.symbol.strip() if args.symbol else None
+    date = args.date
+
+    print(f"\n{'='*60}")
+    print(f"公告查询: {symbol or '全市场'} | 日期: {date}")
+    print(f"{'='*60}\n")
+
+    df = news_fetcher.get_announcement(symbol=symbol, date=date, limit=args.limit)
+
+    if df is None or df.empty:
+        print("暂无数据")
+        return
+
+    print(f"共 {len(df)} 条公告：\n")
+
+    # 按股票分组显示
+    grouped = {}
+    for _, row in df.iterrows():
+        name = row.get('name', row.get('ts_code', '未知'))
+        title = row.get('title', '无标题')
+        ann_time = row.get('ann_time', '')
+        ann_type = row.get('ann_type', '')
+
+        if name not in grouped:
+            grouped[name] = []
+        grouped[name].append((ann_time, ann_type, title))
+
+    for name, announcements in list(grouped.items())[:20]:
+        print(f"【{name}】")
+        for ann_time, ann_type, title in announcements[:5]:
+            print(f"  [{ann_time}] [{ann_type}] {title}")
+        if len(announcements) > 5:
+            print(f"  ... 还有 {len(announcements) - 5} 条公告")
+        print()
+
+    if len(grouped) > 20:
+        print(f"... 还有 {len(grouped) - 20} 只股票的公告未显示")
+
+
+def cmd_limit_up(args):
+    """涨跌停原因命令"""
+    from data_fetcher import get_news_fetcher
+
+    news_fetcher = get_news_fetcher()
+
+    if not news_fetcher.is_available():
+        print("AKShare未安装，涨跌停功能不可用")
+        return
+
+    date = args.date
+    limit_type = args.type  # 'up' or 'down'
+
+    print(f"\n{'='*60}")
+    print(f"涨跌停原因追踪 | 日期: {date} | 类型: {'涨停' if limit_type == 'up' else '跌停'}")
+    print(f"{'='*60}\n")
+
+    if limit_type == "up":
+        df = news_fetcher.get_limit_up_reason(trade_date=date)
+    else:
+        df = news_fetcher.get_limit_down_reason(trade_date=date)
+
+    if df is None or df.empty:
+        print("暂无数据")
+        return
+
+    print(f"共 {len(df)} 只{'涨' if limit_type == 'up' else '跌'}停股票：\n")
+
+    # 按原因分类
+    reason_groups = {}
+    for _, row in df.iterrows():
+        reason = str(row.get('reason', row.get('涨停原因', '其他')))
+        if reason not in reason_groups:
+            reason_groups[reason] = []
+        reason_groups[reason].append(row)
+
+    # 显示原因分类
+    for reason, stocks in sorted(reason_groups.items(), key=lambda x: -len(x[1])):
+        print(f"\n【{reason}】- {len(stocks)} 只")
+        print("-" * 50)
+
+        for row in stocks[:10]:
+            name = row.get('name', row.get('名称', ''))
+            code = str(row.get('ts_code', row.get('代码', ''))).replace(".sh", "").replace(".sz", "")
+            limit_stat = str(row.get('limit_stat', row.get('涨停统计', '-')))
+            limit_time = str(row.get('limit_time', row.get('涨停时间', '-')))
+
+            if limit_type == "up":
+                print(f"  {code} {name:<10} | {limit_stat:<10} | {limit_time}")
+            else:
+                print(f"  {code} {name:<10}")
+
+        if len(stocks) > 10:
+            print(f"  ... 还有 {len(stocks) - 10} 只")
+
+
 def main():
     parser = argparse.ArgumentParser(description="股票分析系统")
     subparsers = parser.add_subparsers(dest="command", help="可用命令")
@@ -415,6 +608,29 @@ def main():
     parser_sell.add_argument('positions', nargs='*', help='持仓股票，格式: 600519@1700')
     parser_sell.add_argument('--test', action='store_true', help='运行测试模式')
 
+    # 消息面命令
+    parser_news = subparsers.add_parser("news", help="消息面查询")
+    subparsers_news = parser_news.add_subparsers(dest="subcommand", help="消息面子命令")
+    parser_news_general = subparsers_news.add_parser("general", help="市场快讯")
+    parser_news_general.add_argument("--limit", "-l", type=int, default=30, help="返回条数")
+
+    parser_news_stock = subparsers_news.add_parser("stock", help="个股新闻")
+    parser_news_stock.add_argument("symbol", help="股票代码")
+
+    parser_news_sentiment = subparsers_news.add_parser("sentiment", help="情绪分析")
+    parser_news_sentiment.add_argument("symbol", help="股票代码")
+
+    # 公告命令
+    parser_ann = subparsers.add_parser("announcement", help="公告查询")
+    parser_ann.add_argument("--symbol", "-s", help="股票代码，默认为全市场")
+    parser_ann.add_argument("--date", "-d", default=None, help="日期 YYYYMMDD")
+    parser_ann.add_argument("--limit", "-l", type=int, default=50, help="返回条数")
+
+    # 涨跌停原因命令
+    parser_limit = subparsers.add_parser("limit-up", help="涨跌停原因追踪")
+    parser_limit.add_argument("--type", "-t", choices=["up", "down"], default="up", help="类型: up=涨停, down=跌停")
+    parser_limit.add_argument("--date", "-d", default=None, help="日期 YYYYMMDD")
+
     args = parser.parse_args()
 
     if args.command == "screener":
@@ -427,6 +643,12 @@ def main():
         cmd_realtime(args)
     elif args.command == "sell":
         cmd_sell(args)
+    elif args.command == "news":
+        cmd_news(args)
+    elif args.command == "announcement":
+        cmd_announcement(args)
+    elif args.command == "limit-up":
+        cmd_limit_up(args)
     else:
         parser.print_help()
 
