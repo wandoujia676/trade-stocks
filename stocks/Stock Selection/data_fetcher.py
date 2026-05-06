@@ -458,19 +458,40 @@ class DataFetcher:
 
     def get_realtime(self, symbol: str) -> Dict[str, Any]:
         """
-        获取实时行情（单股）
+        获取实时行情（单股）- 使用新浪/腾讯实时接口
+
         返回关键字段的字典
         """
         symbol = symbol.strip()
 
-        # 先尝试Tushare（如果有今日数据）
+        # ✅ 优先使用新浪/腾讯实时接口（真正的盘中实时数据）
+        try:
+            realtime_data = self.get_realtime_spot(symbol)
+            if realtime_data and realtime_data.get('current', 0) > 0:
+                return {
+                    "code": symbol,
+                    "name": realtime_data.get('name', ''),
+                    "price": float(realtime_data.get('current', 0)),
+                    "change_pct": float(realtime_data.get('pct_chg', 0)),
+                    "volume": float(realtime_data.get('volume', 0)),
+                    "amount": float(realtime_data.get('amount', 0)),
+                    "high": float(realtime_data.get('high', 0)),
+                    "low": float(realtime_data.get('low', 0)),
+                    "open": float(realtime_data.get('open', 0)),
+                    "prev_close": float(realtime_data.get('close_prev', 0)),
+                    "turnover": 0,
+                    "source": realtime_data.get('source', 'realtime')
+                }
+        except Exception as e:
+            logger.warning(f"实时接口获取失败，降级到日线数据: {e}")
+
+        # ⚠️ 降级: 使用Tushare日线数据（盘后或实时接口失败时）
         try:
             if self.fetchers["tushare"] and self.fetchers["tushare"].is_available():
-                # Tushare的daily可以获取最近交易日的数据
                 ts_code = self._to_tushare_code(symbol)
                 df = self.fetchers["tushare"].get_daily(ts_code=ts_code)
                 if df is not None and not df.empty:
-                    latest = df.iloc[0]  # 最新一条是最新交易日的
+                    latest = df.iloc[0]
                     return {
                         "code": symbol,
                         "name": "",
@@ -490,25 +511,64 @@ class DataFetcher:
 
         return {}
 
-    def get_realtime_batch(self, symbols: List[str]) -> Dict[str, Dict[str, Any]]:
+    def get_realtime_batch(self, codes: List[str]) -> pd.DataFrame:
         """
-        批量获取实时行情
+        批量获取实时行情 - 使用新浪/腾讯实时接口
+
+        Args:
+            codes: 股票代码列表
+
+        Returns:
+            DataFrame with realtime data for all codes
+        """
+        try:
+            from realtime_fetcher import get_realtime_fetcher
+            fetcher = get_realtime_fetcher()
+            return fetcher.get_spot(codes)
+        except Exception as e:
+            logger.error(f"批量获取实时行情失败: {e}")
+            return pd.DataFrame()
+
+    def get_realtime_batch_as_dict(self, symbols: List[str]) -> Dict[str, Dict[str, Any]]:
+        """
+        批量获取实时行情 - 返回字典格式
+
         返回 {代码: 行情字典}
         """
         results = {}
 
-        # 批量获取日线数据（每批最多200只）
+        # ✅ 优先使用新浪/腾讯实时接口
+        try:
+            spots_df = self.get_realtime_batch(symbols)
+            if spots_df is not None and not spots_df.empty:
+                for _, row in spots_df.iterrows():
+                    code = str(row.get('code', '')).zfill(6)
+                    results[code] = {
+                        "code": code,
+                        "name": row.get('name', ''),
+                        "price": float(row.get('current', 0)),
+                        "change_pct": float(row.get('pct_chg', 0)),
+                        "volume": float(row.get('volume', 0)),
+                        "amount": float(row.get('amount', 0)),
+                        "high": float(row.get('high', 0)),
+                        "low": float(row.get('low', 0)),
+                        "open": float(row.get('open', 0)),
+                        "prev_close": float(row.get('close_prev', 0)),
+                        "source": row.get('source', 'realtime')
+                    }
+                return results
+        except Exception as e:
+            logger.warning(f"批量实时接口获取失败: {e}")
+
+        # ⚠️ 降级: 使用Tushare日线数据
         batch_size = 200
         for i in range(0, len(symbols), batch_size):
             batch = symbols[i:i+batch_size]
             try:
-                # 转换代码格式
                 ts_codes = [self._to_tushare_code(s) for s in batch]
-                # 使用Tushare的daily批量接口
                 if self.fetchers["tushare"] and self.fetchers["tushare"].is_available():
                     import tushare as ts
                     pro = ts.pro_api(self.token)
-                    # 限制频率
                     self.fetchers["tushare"]._rate_limit()
                     df = pro.daily(ts_code=','.join(ts_codes))
                     if df is not None and not df.empty:

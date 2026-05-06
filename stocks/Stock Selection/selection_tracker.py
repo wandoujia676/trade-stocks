@@ -343,7 +343,7 @@ class SelectionTracker:
                     tech_indicators = result.get("技术指标", {})
                     held_stocks.append({
                         "代码": code,
-                        "名称": result.get("名称", orig.get("名称", "")),
+                        "名称": result.get("名称") or orig.get("名称") or _get_stock_name(code),
                         "评级": orig.get("评级", "B"),
                         # 使用check_holding_signals的原始结果，不重新生成
                         "信号": result.get("信号", f"持仓{result.get('持有天数', 0)}天-{signal}"),
@@ -780,9 +780,8 @@ class SelectionTracker:
 
         lines = []
         code = s.get('代码', s.get('code', ''))
-        name = s.get('名称', s.get('name', STOCK_NAMES.get(code, '')))
-        if not name:
-            name = STOCK_NAMES.get(code, '')
+        # 名称获取优先级：s中的名称 > _get_stock_name（实时/AKShare）> STOCK_NAMES
+        name = s.get('名称') or s.get('name') or _get_stock_name(code) or STOCK_NAMES.get(code, '')
         rating = s.get('评级', s.get('rating', ''))
         score = s.get('评分', s.get('总分', s.get('score', 0)))
         # 持仓股票的信号优先用持仓检查结果（避免重复计算导致不一致）
@@ -917,7 +916,7 @@ class SelectionTracker:
         # 保留代码和名称
         for stock in stocks_to_save:
             code = stock.get('code', '') or stock.get('代码', '')
-            name = stock.get('name', '') or stock.get('名称', '') or STOCK_NAMES.get(code, '')
+            name = stock.get('name') or stock.get('名称') or _get_stock_name(code) or STOCK_NAMES.get(code, '')
             lines.append(f"{code} - {name}")
 
         with open(self.watchlist_file, 'w', encoding='utf-8') as f:

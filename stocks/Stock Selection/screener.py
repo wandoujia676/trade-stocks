@@ -31,6 +31,7 @@ class StockScreener:
     def __init__(self, params: Dict[str, Any] = None):
         self.params = {**SCREENER_DEFAULTS, **(params or {})}
         self.fetcher = get_fetcher()
+        self._last_screen_stats = None  # 最近一次选股的实时数据获取统计
 
     def screen(self, market: str = "全市场", limit: int = 20, realtime: bool = None) -> List[Dict[str, Any]]:
         """
@@ -77,6 +78,22 @@ class StockScreener:
         3. 快速筛选（基于实时指标）
         4. 对通过的候选获取历史数据 + 实时评分
         """
+        # ============ 步骤0: 大盘趋势判断（李成刚：顺势而为）============
+        print("\n========== 大盘趋势判断 ==========")
+        market_trend = self._get_market_trend()
+        print(f"大盘趋势: {market_trend['趋势']} ({market_trend['评分']}分)")
+        print(f"仓位建议: {market_trend['仓位建议']}")
+        if market_trend.get("原因"):
+            for reason in market_trend["原因"]:
+                print(f"  - {reason}")
+        print(f"建议: {market_trend['建议']}")
+        print("=" * 40)
+
+        # 【v8.3新增】大盘下降趋势时直接返回空
+        if market_trend.get("趋势") == "下降":
+            print("【v8.3整改】大盘下降趋势，停止选股，等待企稳")
+            return []
+
         # 步骤1: 获取候选股票池
         candidates = self._get_candidate_pool(market)
         if not candidates:
@@ -90,8 +107,15 @@ class StockScreener:
         spots_df = self.fetcher.get_realtime_batch(candidates)
 
         if spots_df is None or spots_df.empty:
-            logger.warning("实时行情获取失败，降级到完整模式")
-            return self._screen_full(market, limit)
+            # 【v7.4 强制实时】不降级到日线模式，记录失败并由 cli.py 处理
+            logger.warning("实时行情获取失败（新浪/腾讯均不可用）")
+            self._last_screen_stats = {
+                "candidates": len(candidates),
+                "spots_fetched": 0,
+                "realtime_mode": True,
+                "data_source": "失败",
+            }
+            return []
 
         # 转换为dict便于处理
         spots = {}
@@ -99,6 +123,22 @@ class StockScreener:
             spots[row['code']] = row.to_dict()
 
         logger.info(f"获取到 {len(spots)} 只股票的实时行情")
+
+        # 判断实际使用的数据源（新浪成功还是降级到腾讯）
+        data_source = "sina"
+        if spots_df is not None and not spots_df.empty and 'source' in spots_df.columns:
+            data_source = spots_df['source'].iloc[0]
+        data_source_cn = "新浪" if data_source == "sina" else "腾讯"
+
+        # 记录实时数据获取统计（供 cli.py 做覆盖率检查）
+        self._last_screen_stats = {
+            "candidates": len(candidates),
+            "spots_fetched": len(spots),
+            "realtime_mode": True,
+            "data_source": data_source_cn,
+        }
+        coverage = len(spots) / len(candidates) * 100 if candidates else 0
+        logger.info(f"实时数据覆盖率: {coverage:.1f}% ({len(spots)}/{len(candidates)})，数据源: {data_source_cn}")
 
         # 步骤3: 快速筛选（基于实时指标）
         # 李成刚核心：买跌不买涨，排除追高
@@ -129,6 +169,30 @@ class StockScreener:
             # 如果没有满足条件的，返回所有有实时数据的股票
             quick_filtered = list(spots.keys())[:50]
 
+        # 【v8.0优化】步骤3.5: 批量预取新闻数据（仅获取快讯，避免API超时）
+        news_cache = {}
+        try:
+            news_fetcher = get_news_fetcher()
+            if news_fetcher.is_available():
+                # 只获取市场快讯（快，不超时），通过关键词匹配个股
+                general_news = news_fetcher.get_general_news(limit=50)
+                if not general_news.empty:
+                    # 按关键词分发新闻到相关个股
+                    for _, row in general_news.iterrows():
+                        content = str(row.get('content', '')) + str(row.get('keyword', ''))
+                        for code in quick_filtered[:30]:
+                            if code in news_cache:
+                                continue  # 已分配过的跳过
+                            # 简单匹配：新闻中出现代码或名称关键词
+                            if code in content:
+                                if news_cache.get(code, {}).get('count', 0) < 3:
+                                    news_cache.setdefault(code, {'count': 0, 'keywords': []})
+                                    news_cache[code]['count'] += 1
+                                    news_cache[code]['keywords'].append(str(row.get('keyword', ''))[:20])
+                logger.info(f"预取新闻数据: {len(news_cache)} 只")
+        except Exception as e:
+            logger.debug(f"新闻预取失败: {e}")
+
         # 步骤4: 获取历史数据 + 实时评分
         scored = []
         for code in quick_filtered[:100]:  # 限制处理数量
@@ -142,9 +206,14 @@ class StockScreener:
                 if df_history is None or len(df_history) < 20:
                     continue
 
-                # 调用实时评估
+                # 将预取新闻数据注入 realtime_data（供 warfare 使用）
+                eval_data = dict(realtime_data)
+                if code in news_cache:
+                    eval_data['_news_sentiment'] = news_cache[code]
+
+                # 调用实时评估（纯左侧战法 v8.0）
                 warfare = get_warfare()
-                result = warfare.evaluate_realtime(df_history, realtime_data)
+                result = warfare.evaluate_realtime(df_history, eval_data, mode="left")
 
                 if "error" in result:
                     continue
@@ -163,6 +232,8 @@ class StockScreener:
                     "趋势": result.get("趋势", {}).get("评分", 0),
                     "动量": result.get("动量", {}).get("评分", 0),
                     "量价": result.get("量价", {}).get("评分", 0),
+                    "量在价先": result.get("量在价先", {}).get("评分", 0),
+                    "热点消息": result.get("热点消息", {}).get("评分", 0),
                     "形态": result.get("形态", {}).get("评分", 0),
                     "位置": result.get("位置", {}).get("评分", 0),
                     "情绪": result.get("情绪", {}).get("评分", 0),
@@ -185,10 +256,149 @@ class StockScreener:
         # 步骤5: 过滤和排序
         scored = [s for s in scored if "加仓" in s.get("信号", "") or "买入" in s.get("信号", "")]
 
+        # 【v8.0新增】步骤6: 应用板块轮动加成
+        scored = self._apply_sector_rotation_bonus(scored)
+
+        # 添加大盘趋势信息（李成刚：顺势而为）
+        for stock in scored:
+            stock["大盘趋势"] = market_trend["趋势"]
+            stock["建议仓位"] = market_trend["仓位建议"]
+
         scored.sort(key=lambda x: x["总分"], reverse=True)
 
         logger.info(f"实时选股完成，返回 {min(len(scored), limit)} 只")
         return scored[:limit]
+
+    # ==================== 板块轮动分析 v8.0 ====================
+    # 【v8.0 新增核心维度】
+    # 核心理念：借板块之势——在热板轮动中选左侧股票，拉升更快
+    # 今日热点板块的龙头股，更容易获得资金青睐
+
+    def _get_hot_sectors(self) -> Tuple[set, dict]:
+        """
+        获取今日热门板块（通过涨跌停股票推断）
+
+        Returns:
+            (hot_sectors: set of sector names, sector_scores: dict of sector -> hot score)
+            如果失败，返回 (empty set, empty dict)
+        """
+        hot_sectors = set()
+        sector_scores = {}  # 板块 -> 热度得分
+
+        try:
+            news_fetcher = get_news_fetcher()
+            if not news_fetcher.is_available():
+                return hot_sectors, sector_scores
+
+            # 获取今日涨停原因分析（反映热点板块）
+            today = datetime.now().strftime("%Y%m%d")
+            limit_df = news_fetcher.get_limit_up_reason(trade_date=today)
+            if limit_df is None or limit_df.empty:
+                # 尝试获取市场快讯作为热点参考
+                news_df = news_fetcher.get_general_news(limit=30)
+                if news_df is None or news_df.empty:
+                    return hot_sectors, sector_scores
+
+                # 从新闻关键词推断热点
+                hot_keywords = ["科技", "新能源", "医药", "消费", "芯片", "人工智能",
+                               "半导体", "军工", "光伏", "锂电池", "储能", "电动车"]
+                sector_keyword_count = {}
+                for _, row in news_df.iterrows():
+                    content = str(row.get('content', '')) + str(row.get('keyword', ''))
+                    for kw in hot_keywords:
+                        if kw in content:
+                            sector_keyword_count[kw] = sector_keyword_count.get(kw, 0) + 1
+
+                for sector, count in sector_keyword_count.items():
+                    if count >= 2:
+                        hot_sectors.add(sector)
+                        sector_scores[sector] = min(count * 5, 25)  # 最高25分
+
+                return hot_sectors, sector_scores
+
+            # 从涨停原因中提取热点板块
+            for _, row in limit_df.iterrows():
+                reason = str(row.get('reason', ''))
+                # 提取板块关键词
+                hot_keywords = ["科技", "新能源", "医药", "消费", "芯片", "人工智能",
+                               "半导体", "军工", "光伏", "锂电池", "储能", "电动车",
+                               "汽车", "地产", "金融", "证券", "化工", "次新"]
+                for kw in hot_keywords:
+                    if kw in reason:
+                        hot_sectors.add(kw)
+                        sector_scores[kw] = sector_scores.get(kw, 0) + 5
+
+            logger.info(f"今日热门板块: {list(hot_sectors)[:5]}")
+
+        except Exception as e:
+            logger.debug(f"获取热门板块失败: {e}")
+
+        return hot_sectors, sector_scores
+
+    def _get_stock_sector(self, code: str) -> str:
+        """
+        获取个股所属板块（通过名称/概念推断）
+
+        Returns:
+            板块名称，如果没有找到返回 ""
+        """
+        try:
+            info = self.fetcher.get_stock_info(code)
+            name = info.get('name', '') or info.get('股票名称', '')
+
+            # 通过名称关键词匹配板块
+            sector_keywords = {
+                "新能源": ["新能源", "锂电", "光伏", "储能", "电动车", "汽车"],
+                "科技": ["科技", "软件", "芯片", "半导体", "人工智能", "AI", "智能"],
+                "消费": ["消费", "食品", "白酒", "家电", "旅游", "零售"],
+                "医药": ["医药", "医疗", "生物", "中药", "疫苗", "健康"],
+                "金融": ["银行", "证券", "保险", "金融"],
+                "周期": ["钢铁", "煤炭", "有色", "化工", "建材", "矿产"],
+                "军工": ["军工", "航空", "航天", "船舶", "国防"],
+            }
+
+            for sector, keywords in sector_keywords.items():
+                for kw in keywords:
+                    if kw in name:
+                        return sector
+
+            return ""
+
+        except Exception as e:
+            logger.debug(f"获取个股板块失败 {code}: {e}")
+            return ""
+
+    def _apply_sector_rotation_bonus(self, scored: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        应用板块轮动加成 v8.0
+
+        逻辑：
+        - 股票属于今日热门板块 → +15分
+        - 股票属于非热门但也不冷门的板块 → +5分
+        - 股票属于冷门板块（不在热门列表）→ 不加分不扣分
+        - 注意：不扣分（板块轮动是加分项，不是过滤项）
+        """
+        hot_sectors, sector_scores = self._get_hot_sectors()
+
+        if not hot_sectors:
+            # 如果无法获取热门板块，跳过加成
+            return scored
+
+        for stock in scored:
+            code = stock.get('代码', '') or stock.get('code', '')
+            stock_sector = self._get_stock_sector(code)
+            stock['所属板块'] = stock_sector
+
+            if stock_sector in hot_sectors:
+                bonus = sector_scores.get(stock_sector, 15)
+                stock['板块加成'] = bonus
+                stock['板块状态'] = "热点"
+                stock['总分'] = round(stock.get('总分', 0) + bonus, 1)
+            else:
+                stock['板块加成'] = 0
+                stock['板块状态'] = "普通"
+
+        return scored
 
     def _screen_full(self, market: str, limit: int) -> List[Dict[str, Any]]:
         """
@@ -206,6 +416,11 @@ class StockScreener:
                 print(f"  - {reason}")
         print(f"建议: {market_trend['建议']}")
 
+        # 【v8.3整改】大盘下降趋势时直接返回空（不限制数量，直接停止）
+        if market_trend.get("趋势") == "下降":
+            print("【v8.3整改】大盘下降趋势，停止选股，等待企稳")
+            return []
+
         # 根据大盘趋势调整选股数量
         adjusted_limit = self._get_position_limit(market_trend, limit)
         if adjusted_limit < limit:
@@ -219,6 +434,18 @@ class StockScreener:
             return []
 
         logger.info(f"候选股票数量: {len(candidates)}")
+
+        # 记录统计（盘后模式，非实时）
+        self._last_screen_stats = {
+            "candidates": len(candidates),
+            "spots_fetched": len(candidates),  # 盘后模式全部获取
+            "realtime_mode": False,
+        }
+
+        # 【v8.3新增】大盘下降趋势时直接返回空（不做左侧选股）
+        if market_trend.get("趋势") == "下降":
+            print("【v8.3整改】大盘下降趋势，停止选股，等待企稳")
+            return []
 
         # 步骤2: 批量技术面筛选
         tech_passed = self._filter_technical(candidates)
@@ -247,6 +474,10 @@ class StockScreener:
         # 排序并返回
         scored.sort(key=lambda x: x["总分"], reverse=True)
         return scored[:adjusted_limit]
+
+    def get_last_screen_stats(self) -> Optional[Dict[str, Any]]:
+        """获取最近一次选股的实时数据获取统计"""
+        return self._last_screen_stats
 
     def _get_candidate_pool(self, market: str) -> List[str]:
         """
@@ -378,54 +609,60 @@ class StockScreener:
                     continue
 
                 # ========== 通过筛选，计算初步评分 ==========
-                # 李成刚核心：左侧买入 = 超跌反弹，不是追涨
-                # 修改：给超跌股票加分，给大涨股票减分
+                # 【v8.3整改】修复动量矛盾：
+                # 预筛选打分和最终评分要一致，不能一个给跌的打分、另一个给涨的打分
+                # 整改：预筛选聚焦"技术面健康度"，评分聚焦"动量启动"
                 pre_score = 0
 
-                # 近期涨幅加分（李成刚：超跌才是机会！）
-                # 下跌幅度越大，左侧买点信号越强
-                if change_5d <= -15:
-                    pre_score += 30  # 深度超跌，强烈左侧信号
-                elif change_5d <= -10:
-                    pre_score += 25  # 超跌
-                elif change_5d <= -5:
-                    pre_score += 20  # 跌幅较大
-                elif change_5d <= -2:
-                    pre_score += 15  # 小幅下跌
-                elif change_5d <= 0:
-                    pre_score += 10  # 微跌，正常范围
-                elif change_5d <= 5:
-                    pre_score += 5   # 小幅上涨
-                elif change_5d <= 10:
-                    pre_score += 0   # 涨幅适中，不加分
-                else:
-                    pre_score -= 10  # 大涨超过10%，左侧买点已过
-
-                # 量比加分（缩量见底是左侧信号）
+                # 1. 量能健康度（缩量是左侧信号，但要和评分一致）
                 if vol_ratio < 0.5:
-                    pre_score += 15  # 极度缩量，地量见底
+                    pre_score += 10  # 极度缩量，地量见底
                 elif vol_ratio < 0.7:
-                    pre_score += 10  # 缩量
+                    pre_score += 7   # 缩量
                 elif vol_ratio < 1.0:
-                    pre_score += 5   # 轻度缩量
-                elif vol_ratio >= 2.0:
-                    pre_score -= 5   # 放量需要确认，不一定是机会
+                    pre_score += 3   # 轻度缩量
+                elif vol_ratio >= 2.5:
+                    pre_score -= 5   # 异常放量，需确认
 
-                # 均线加分（价格在均线下方是左侧信号）
-                if len(ma5) > 0 and closes[-1] < ma5[-1]:
-                    pre_score += 5   # 价格低于MA5，左侧信号
-                if len(ma10) > 0 and closes[-1] < ma10[-1]:
-                    pre_score += 5   # 价格低于MA10
-                if len(ma20) > 0 and closes[-1] < ma20[-1]:
-                    pre_score += 5   # 价格低于MA20，位置较低
+                # 2. 均线位置（价格在均线附近=正常，过高/过低都要扣分）
+                if len(ma5) > 0:
+                    ma5_dist = (closes[-1] - ma5[-1]) / ma5[-1] * 100
+                    if abs(ma5_dist) < 3:
+                        pre_score += 8   # 贴近MA5，最佳位置
+                    elif ma5_dist < -10:
+                        pre_score += 5   # 偏离MA5下方较多，左侧信号（但降低权重）
+                    elif ma5_dist > 10:
+                        pre_score -= 5   # 偏离MA5上方，追高风险
 
-                # MACD加分（DIF在0轴下方但即将上穿是左侧信号）
+                if len(ma20) > 0:
+                    ma20_dist = (closes[-1] - ma20[-1]) / ma20[-1] * 100
+                    if ma20_dist < -15:
+                        pre_score += 5   # 严重偏离MA20下方，左侧信号
+                    elif ma20_dist > 15:
+                        pre_score -= 5   # 严重偏离MA20上方，追高风险
+
+                # 3. MACD状态（DIF在0轴附近最佳，过低说明很弱）
                 if macd_val > 0:
-                    pre_score += 0   # 已在0轴上方，右侧信号
-                elif macd_val > -1:
-                    pre_score += 10  # DIF在0轴附近，即将金叉
-                elif macd_val > -2:
-                    pre_score += 5   # DIF在0轴下方
+                    pre_score += 5    # 已在0轴上方，右侧健康
+                elif macd_val > -0.5:
+                    pre_score += 10   # DIF在0轴附近，即将金叉，最佳左侧买点
+                elif macd_val > -1.5:
+                    pre_score += 5    # DIF在0轴下方，不算太差
+                # macd_val < -1.5: 不加分，说明很弱
+
+                # 4. 趋势健康度（不是单边下跌的股票）
+                if change_5d >= -5 and change_5d <= 10:
+                    pre_score += 10  # 区间震荡，最健康
+                elif change_5d > 10:
+                    pre_score -= 3   # 近期涨幅过大，追高风险
+                elif change_5d < -15:
+                    pre_score -= 5   # 【v8.3降低】跌幅过大，可能是接飞刀
+
+                # 5. 排除明显下跌趋势（20日均线空头）
+                if len(ma5) > 0 and len(ma20) > 0:
+                    if ma5[-1] < ma20[-1] * 0.97:  # MA5明显低于MA20
+                        if change_5d < -5:
+                            continue  # 均线空头+近期下跌 = 明确下跌趋势，放弃
 
                 passed.append({
                     "code": code,
@@ -451,37 +688,84 @@ class StockScreener:
 
     def _filter_fundamental(self, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        基本面筛选 - 优化版：放宽条件，让更多股票通过
+        基本面筛选 - v8.3整改版：强化基本面，无法获取时降级不通过
 
-        修改：
-        1. 大幅降低最小市值门槛（从50亿降到10亿）
-        2. 移除价格上限限制（让高价格的好股票也能通过）
-        3. 无法获取数据时默认通过
+        整改内容：
+        1. 无法获取基本面数据 → 标记为低优先级（排在后面）
+        2. 增加 PE 过滤（排除亏损股和高估值）
+        3. 增加 ROE 过滤（排除低质量公司）
+        4. 增加负债率过滤（排除高杠杆风险）
         """
-        min_market_cap = self.params.get("市值_min", 10)  # 亿，降低到10亿
+        min_market_cap = self.params.get("市值_min", 30)  # 亿，提高到30亿
+        max_pe = 80  # PE上限（排除亏损股和高估值）
+        min_roe = 5  # ROE下限（%）
+        max_debt_ratio = 70  # 负债率上限（%）
 
         passed = []
+        low_priority = []  # 【v8.3新增】无法获取基本面的股票
         for item in candidates:
             try:
                 info = self.fetcher.get_stock_info(item["code"])
+
+                # 【v8.3整改】无法获取基本面数据 → 不通过（降级处理）
                 if not info:
-                    # 无法获取信息时，默认通过
-                    passed.append(item)
+                    low_priority.append(item)
                     continue
 
-                # 市值检查（如果有数据）
+                # 市值检查
                 if "总市值" in info:
                     market_cap_str = info["总市值"]
                     if "亿" in market_cap_str:
                         cap = float(market_cap_str.replace("亿", "").replace("万", ""))
                         if cap < min_market_cap:
+                            low_priority.append(item)
                             continue
+
+                # 【v8.2新增】PE检查（排除亏损股）
+                pe_ratio = info.get("pe_ratio") or info.get("市盈率")
+                if pe_ratio is not None:
+                    try:
+                        pe_val = float(str(pe_ratio).replace("万", "").replace("亿", ""))
+                        if pe_val <= 0 or pe_val > max_pe:  # 亏损(<=0)或高估值(>80)
+                            low_priority.append(item)
+                            continue
+                    except (ValueError, TypeError):
+                        low_priority.append(item)
+                        continue
+
+                # 【v8.2新增】ROE检查（排除低质量公司）
+                roe = info.get("roe") or info.get("净资产收益率")
+                if roe is not None:
+                    try:
+                        roe_val = float(str(roe).replace("%", ""))
+                        if 0 < roe_val < min_roe:  # ROE过低
+                            low_priority.append(item)
+                            continue
+                    except (ValueError, TypeError):
+                        low_priority.append(item)
+                        continue
+
+                # 【v8.2新增】负债率检查（排除高杠杆）
+                debt_ratio = info.get("debt_ratio") or info.get("资产负债率")
+                if debt_ratio is not None:
+                    try:
+                        dr_val = float(str(debt_ratio).replace("%", ""))
+                        if dr_val > max_debt_ratio:  # 负债率过高
+                            low_priority.append(item)
+                            continue
+                    except (ValueError, TypeError):
+                        low_priority.append(item)
+                        continue
 
                 passed.append(item)
             except Exception:
-                # 出错时也默认通过
-                passed.append(item)
+                low_priority.append(item)
                 continue
+
+        # 【v8.3整改】把低优先级股票加到末尾（但不在回测中使用）
+        for item in low_priority:
+            item["_low_priority"] = True  # 标记，用于后续过滤
+            passed.append(item)
 
         return passed
 
@@ -553,24 +837,27 @@ class StockScreener:
                 # 基础综合评分
                 base_score = composite.get("评分", 50)
 
-                # ========== 动量加权 ==========
-                # 获取预筛选阶段的动量评分
-                pre_score = item.get("metrics", {}).get("pre_score", 0)
+                # ========== 动量加权（v8.3整改）============
+                # 【核心问题】之前的逻辑：给涨的股票加分，给跌的加分
+                # 整改后：动量加权要看"趋势是否健康"，不是"涨了就加分"
+                # - 小幅震荡上涨（0-5%）= 最健康，加分
+                # - 大涨（>10%）= 可能追高，减分
+                # - 小幅下跌（-5%~0）= 可接受，不加分不减分
+                # - 大跌（<-10%）= 接飞刀风险，减分
                 change_5d = item.get("metrics", {}).get("5日涨幅", 0)
-
-                # 动量加成：近期涨幅大的股票加权
-                # 5日涨幅超过10%额外加8-30分
                 momentum_bonus = 0
-                if change_5d >= 20:
-                    momentum_bonus = 30
-                elif change_5d >= 15:
-                    momentum_bonus = 25
-                elif change_5d >= 10:
-                    momentum_bonus = 15
-                elif change_5d >= 5:
-                    momentum_bonus = 8
-                elif change_5d >= 3:
-                    momentum_bonus = 3
+                if 0 <= change_5d <= 5:
+                    momentum_bonus = 10   # 小幅震荡，最健康
+                elif 5 < change_5d <= 10:
+                    momentum_bonus = 5    # 温和上涨，可接受
+                elif change_5d > 10:
+                    momentum_bonus = -5   # 涨幅过大，可能回调
+                elif -5 <= change_5d < 0:
+                    momentum_bonus = 0    # 微跌，正常
+                elif -10 <= change_5d < -5:
+                    momentum_bonus = -3   # 明显下跌，风险
+                elif change_5d < -10:
+                    momentum_bonus = -8   # 【v8.3】大跌减分，避免接飞刀
 
                 # ========== 消息面情绪加权 (小金库 6.4) ==========
                 sentiment_bonus = 0
@@ -859,6 +1146,11 @@ class StockScreener:
             trend["评分"] = max(0, min(100, score))
 
             # ============ 确定趋势和仓位建议 ============
+            # 【v8.3整改】更严格的下降趋势判断标准
+            # 只有同时满足以下条件才判定为"下降"：
+            # 1. 均线空头（MA5 < MA20）
+            # 2. 价格在MA20下方
+            # 3. 近期明显下跌（5日跌>3%或20日跌>5%）
             if score >= 60:  # 上升趋势
                 trend["趋势"] = "上升"
                 trend["建议"] = "积极选股，左侧买入成功率高"
@@ -867,10 +1159,11 @@ class StockScreener:
                 trend["趋势"] = "震荡"
                 trend["建议"] = "精选个股，控制仓位"
                 trend["仓位建议"] = "轻仓（10-20%）"
-            else:  # 下降趋势
+            else:  # 【v8.3整改】下降趋势：停止选股
                 trend["趋势"] = "下降"
-                trend["建议"] = "减少选股，多看少动"
-                trend["仓位建议"] = "极轻仓（5-10%）或空仓"
+                trend["建议"] = "【停止选股】左侧战法在下降市中几乎必亏"
+                trend["仓位建议"] = "空仓（0%）"
+                trend["操作"] = "STOP"  # 特殊标记，告诉上层停止选股
 
         except Exception as e:
             logger.warning(f"大盘趋势判断失败: {e}")

@@ -7,6 +7,57 @@ import json
 import sys
 from pathlib import Path
 
+# 小金库版本
+VERSION = "8.1"
+
+# 版本更新记录
+VERSION_LOG = [
+    ("8.1", "2026-04-24", [
+        "修复: 量在价先判断区分放量上涨 vs 放量下跌（后者扣分）",
+        "修复: 底部堆量判断增加价格止跌条件（放量下跌不加分）",
+        "修复: 放量反弹区分上涨 vs 下跌（下跌扣分）",
+    ]),
+    ("8.0", "2026-04-24", [
+        "重大: 新增量在价先维度（主力吸筹信号，权重15%）",
+        "重大: 新增热点消息维度（消息面催化，权重15%）",
+        "新增: 板块轮动加成（今日热点板块股票+15分）",
+        "新增: 九维度评分体系（趋势/动量/左侧/量价/量在价先/形态/位置/热点消息/情绪）",
+        "固化: 实时数据失败时不降级日线模式",
+        "固化: 股票名称实时获取机制",
+    ]),
+    ("7.4", "2026-04-24", [
+        "强制: 实时数据失败时不降级到日线模式（覆盖率为0则阻止保存出击报告）",
+        "修复: 股票名称获取优先使用实时/AKShare接口，移除对STOCK_NAMES的依赖",
+        "修复: 持仓股票名称为空时调用_get_stock_name()获取正确名称",
+    ]),
+    ("7.3", "2026-04-24", [
+        "固化: 实时数据覆盖率检查（<30%阻止保存，<50%警告，>50%成功）",
+        "固化: 实时模式增加大盘趋势判断",
+        "固化: 数据源标注（新浪/腾讯）",
+    ]),
+    ("7.2", "2026-04-22", [
+        "固化: 实时数据规范（新浪/腾讯接口优先）",
+        "固化: 追高过滤机制（BOLL>85%/RSI>70自动降级）",
+        "固化: 纯左侧战法选股标准（RSI<35, BOLL 30-70%）",
+        "固化: 成功案例与失败案例分析",
+        "新增: 客户需求文档v7.2（核心规范）",
+    ]),
+    ("7.1", "2026-04-22", [
+        "修复: 实时数据获取改用新浪实时接口（之前错误使用Tushare日线数据）",
+        "修复: 选股评分增加追高过滤机制（BOLL>85%/RSI>70等自动降级）",
+        "优化: 综合评分中加入BOLL位置、RSI、涨幅等多重追高检查",
+    ]),
+    ("7.0", "2026-04-21", [
+        "重大: 强制实时选股，移除自动/盘后模式",
+        "新增: 每次选股显示时间戳",
+        "新增: 使用最新版本算法",
+    ]),
+    ("6.5", "2026-04-21", [
+        "修复: 选股结果表格添加股票名称列，显示正确的实时名称",
+        "修复: 修复了股票名称乱码问题（XDDR、创业板化学等错误名称）",
+    ]),
+]
+
 # 添加父目录到路径，以便导入stocks模块
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -22,24 +73,18 @@ from config import MONITOR_FILE, ALERTS_FILE
 
 
 def cmd_screener(args):
-    """选股命令"""
-    # 判断是否实时模式: --realtime强制实时, --full强制完整, 默认自动判断
-    if args.full:
-        realtime_mode = False
-        mode_str = "【完整模式】"
-    elif args.realtime:
-        realtime_mode = True
-        mode_str = "【实时模式】"
-    else:
-        # 自动判断
-        from data_fetcher import get_fetcher
-        fetcher = get_fetcher()
-        is_open = fetcher.is_market_open()
-        realtime_mode = None  # 传None让screener自动判断
-        mode_str = "【自动】"
+    """选股命令 - 强制实时模式"""
+    from datetime import datetime
+
+    # 强制实时模式（7.0+）
+    realtime_mode = True
+    now = datetime.now()
+    timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
 
     print(f"\n{'='*50}")
-    print(f"开始选股筛选... {mode_str}")
+    print(f"开始选股筛选... 【实时模式】")
+    print(f"选股时间: {timestamp}")
+    print(f"使用版本: v{VERSION}")
     print(f"{'='*50}\n")
 
     screener = get_screener()
@@ -52,46 +97,104 @@ def cmd_screener(args):
     # 检查是否为实时模式
     first_realtime = results[0].get('实时模式', False) if results else False
 
-    print(f"\n筛选结果（共{len(results)}只，按评分排序）{'(实时数据)' if first_realtime else ''}：\n")
-    print(f"{'代码':<10} {'评级':<6} {'信号':<8} {'总分':<6} {'趋势':<6} {'动量':<6} {'量价':<6} {'形态':<6} {'情绪':<6}")
-    print("-" * 100)
+    print(f"\n筛选结果（共{len(results)}只，按评分排序）【实时数据】：\n")
+    print(f"{'代码':<10} {'名称':<10} {'评级':<6} {'信号':<8} {'总分':<6} {'趋势':<6} {'动量':<6} {'量价':<6} {'量先':<6} {'热点':<6} {'情绪':<6} {'板块':<6}")
+    print("-" * 130)
 
     for i, stock in enumerate(results[:args.limit], 1):
         code = stock.get('代码', '') or stock.get('code', '')
+        name = stock.get('名称', '') or stock.get('name', '') or stock.get('股票名称', '') or code
         rating = stock.get('评级', 'B')
         signal = stock.get('信号', '持有')
         total = stock.get('总分', 0)
         trend = stock.get('趋势', 0) or stock.get('趋势分', 0)
         momentum = stock.get('动量', 0) or stock.get('动量分', 0)
         vol_price = stock.get('量价', 0) or stock.get('量价分', 0)
-        pattern = stock.get('形态', 0) or stock.get('形态分', 0)
+        vol_leading = stock.get('量在价先', 0)
+        news_hot = stock.get('热点消息', 0)
         sentiment = stock.get('情绪', 0) or stock.get('情绪分', 0)
+        sector = stock.get('所属板块', '') or stock.get('板块状态', '')
 
-        print(f"{code:<10} {rating:<6} {signal:<8} {total:<6.1f} {trend:<6.1f} {momentum:<6.1f} {vol_price:<6.1f} {pattern:<6.1f} {sentiment:<6.1f}")
+        print(f"{code:<10} {name:<10} {rating:<6} {signal:<8} {total:<6.1f} {trend:<6.1f} {momentum:<6.1f} {vol_price:<6.1f} {vol_leading:<6.1f} {news_hot:<6.1f} {sentiment:<6.1f} {sector:<6}")
 
     print()
 
-    # 保存结果到文件
+    # ============================================================
+    # 实时数据覆盖率检查（客户需求文档 v7.3 固化要求）
+    # ============================================================
+    stats = screener.get_last_screen_stats()
+    save_blocked = False
+    if stats and stats.get("realtime_mode"):
+        candidates = stats.get("candidates", 0)
+        spots = stats.get("spots_fetched", 0)
+        coverage = spots / candidates * 100 if candidates > 0 else 0
+
+        if coverage < 30:
+            data_source = stats.get("data_source", "未知")
+            print(f"\n{'='*50}")
+            if spots == 0:
+                print(f"【严重】实时数据获取完全失败（新浪/腾讯均不可用）")
+                print(f"  候选股票: {candidates} 只")
+                print(f"  成功获取实时数据: 0 只")
+                print(f"  数据源: {data_source}")
+                print(f"  → 本次选股未使用实时数据，不更新出击报告")
+                print(f"  → 请检查网络后重新运行选股")
+            else:
+                print(f"【严重】实时数据获取失败率过高: {100-coverage:.1f}%")
+                print(f"  候选股票: {candidates} 只")
+                print(f"  成功获取实时数据: {spots} 只")
+                print(f"  覆盖率: {coverage:.1f}%")
+                print(f"  数据源: {data_source}")
+                print(f"  → 本次选股数据不完整，不更新出击报告")
+                print(f"  → 请检查网络后重新运行选股")
+            print(f"{'='*50}\n")
+            save_blocked = True
+        elif coverage < 50:
+            data_source = stats.get("data_source", "未知")
+            print(f"\n{'='*50}")
+            print(f"【警告】实时数据不稳定，部分失败")
+            print(f"  候选股票: {candidates} 只")
+            print(f"  成功获取实时数据: {spots} 只")
+            print(f"  覆盖率: {coverage:.1f}%")
+            print(f"  数据源: {data_source}")
+            print(f"  → 建议：检查网络后重新运行选股以获得完整结果")
+            print(f"{'='*50}\n")
+        else:
+            data_source = stats.get("data_source", "新浪/腾讯")
+            print(f"\n[PASS] 实时数据：成功 ({spots}/{candidates} 只) - 数据源: {data_source}\n")
+
+    # 保存结果到文件（仅在覆盖率>=30%时更新出击报告）
     tracker = get_tracker()
-    tracker.add_weekly_watchlist(results)  # 保存到 View Results/出击.txt（含持仓检查）
-    tracker.save_weekly_watchlist(results)  # 保存到 View Results/weekly_watchlist.txt
 
-    # 先打印持仓检查报告（使用最新数据）
-    holding_report = tracker.get_holding_report()
-    print("\n" + holding_report)
+    if save_blocked:
+        # 覆盖率<30%：不更新出击相关文件，只保留持仓检查
+        print("\n【提示】仅更新持仓检查，暂不更新出击报告")
+        tracker.add_weekly_watchlist(results)  # 持仓股票仍更新最新价格
+        # tracker.save_weekly_watchlist(results)  # 不保存，避免污染周选池
+        # tracker.save_report()  # 不保存出击报告
+        holding_report = tracker.get_holding_report()
+        print("\n" + holding_report)
+        print(f"\n出击报告未更新（实时数据覆盖率仅{coverage:.1f}%，请重新运行）")
+    else:
+        tracker.add_weekly_watchlist(results)
+        tracker.save_weekly_watchlist(results)
 
-    # 再生成出击报告（持仓股票信号已包含在出击.txt中）
-    tracker.save_report()  # 保存到 View Results/出击.报告.txt
+        # 先打印持仓检查报告（使用最新数据）
+        holding_report = tracker.get_holding_report()
+        print("\n" + holding_report)
 
-    # 过滤加仓股票单独记录
-    buy_signals = ["加仓", "买入", "强烈推荐"]
-    buy_stocks = [s for s in results if s.get("信号", "") in buy_signals]
-    if buy_stocks:
-        tracker.add_buy_signal(buy_stocks)
+        # 再生成出击报告（持仓股票信号已包含在出击.txt中）
+        tracker.save_report()
 
-    print(f"结果已保存到: {tracker.tracker_file}")
-    print(f"自选股已保存到: {tracker.watchlist_file}")
-    print(f"报告已保存到: {tracker.tracker_file.parent / '出击.报告.txt'}")
+        # 过滤加仓股票单独记录
+        buy_signals = ["加仓", "买入", "强烈推荐"]
+        buy_stocks = [s for s in results if s.get("信号", "") in buy_signals]
+        if buy_stocks:
+            tracker.add_buy_signal(buy_stocks)
+
+        print(f"结果已保存到: {tracker.tracker_file}")
+        print(f"自选股已保存到: {tracker.watchlist_file}")
+        print(f"报告已保存到: {tracker.tracker_file.parent / '出击.报告.txt'}")
 
 
 def cmd_analyze(args):
@@ -567,17 +670,42 @@ def cmd_limit_up(args):
             print(f"  ... 还有 {len(stocks) - 10} 只")
 
 
+def show_version():
+    """显示版本信息"""
+    print(f"╔══════════════════════════════════════════╗")
+    print(f"║         小金库 Stock System v{VERSION}        ║")
+    print(f"╚══════════════════════════════════════════╝")
+    print()
+    # 显示最新版本更新
+    if VERSION_LOG:
+        latest_ver, latest_date, latest_changes = VERSION_LOG[0]
+        print(f"【v{latest_ver} 更新】 ({latest_date})")
+        for change in latest_changes:
+            print(f"  - {change}")
+        print()
+        print("（查看完整更新记录: --changelog 或 -c）")
+        print()
+
+
 def main():
+    # 解析参数先检查是否有 --changelog
+    if "--changelog" in sys.argv or "-c" in sys.argv:
+        show_version()
+        sys.exit(0)
+
+    # 显示版本信息
+    show_version()
+
     parser = argparse.ArgumentParser(description="股票分析系统")
+    parser.add_argument("--version", "-v", action="version", version=f"%(prog)s {VERSION}")
+    parser.add_argument("--changelog", "-c", action="store_true", help="显示版本更新记录")
     subparsers = parser.add_subparsers(dest="command", help="可用命令")
 
-    # 选股命令
+    # 选股命令（7.0+ 强制实时模式）
     parser_screener = subparsers.add_parser("screener", help="筛选股票")
     parser_screener.add_argument("--market", "-m", default="全市场", help="市场范围")
     parser_screener.add_argument("--limit", "-l", type=int, default=20, help="返回数量")
     parser_screener.add_argument("--output", "-o", help="结果保存路径")
-    parser_screener.add_argument("--realtime", "-r", action="store_true", help="使用实时模式（盘中选股）")
-    parser_screener.add_argument("--full", "-f", action="store_true", help="使用完整模式（盘后选股，等同于默认）")
 
     # 分析命令
     parser_analyze = subparsers.add_parser("analyze", help="分析股票")

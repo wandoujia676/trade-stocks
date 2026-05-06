@@ -1,5 +1,5 @@
 """
-综合战法系统 - 小金库 5.1 纯左侧战法
+综合战法系统 - 小金库 8.1 纯左侧战法
 核心思想：买在分歧，卖在一致
 在股票还没有大幅拉升的阶段提前潜伏，等待反弹或反转
 
@@ -56,6 +56,7 @@ class ComprehensiveWarfare:
         result = {}
         result["_df"] = df  # 保存原始数据用于止盈止损计算
         result["战法模式"] = mode
+        self._current_info = info  # 保存info供各维度评估方法使用
 
         if mode == "wave":
             # ============ 波段主升浪战法 ============
@@ -92,8 +93,8 @@ class ComprehensiveWarfare:
             result["信号"] = self._generate_wave_signal(result)
 
         else:
-            # ============ 纯左侧战法（原逻辑）============
-            result["战法模式"] = "左侧"
+            # ============ 纯左侧战法 v8.0（量在价先 + 热点消息）============
+            result["战法模式"] = "左侧v8.0"
 
             # 1. 趋势评估 - 均线蓄势/收敛
             result["趋势"] = self._evaluate_trend_left(df)
@@ -107,22 +108,29 @@ class ComprehensiveWarfare:
             # 4. 量价评估 - 地量见底
             result["量价"] = self._evaluate_volume_price_left(df)
 
-            # 5. 形态评估 - 探底形态
+            # 5. 【v8.0新增】量在价先 - 量能先于价格启动（主力吸筹信号）
+            result["量在价先"] = self._evaluate_volume_leading_left(df)
+
+            # 6. 形态评估 - 探底形态
             result["形态"] = self._evaluate_patterns_left(df)
 
-            # 6. 位置评估 - 低位支撑
+            # 7. 位置评估 - 低位支撑
             result["位置"] = self._evaluate_position_left(df)
 
-            # 7. 情绪评估 - 涨停基因
+            # 8. 【v8.0新增】热点消息 - 消息面催化剂（决定能否快速拉升）
+            stock_code = info.get('code', '') if info else (realtime_data.get('code', '') if realtime_data else '')
+            result["热点消息"] = self._evaluate_news_hot_left(df, code=stock_code)
+
+            # 9. 情绪评估 - 涨停基因（保留，与热点消息有重叠但独立）
             result["情绪"] = self._evaluate_sentiment_left(df)
 
-            # 8. 综合评分
+            # 10. 综合评分（v8.0权重：量在价先15%，热点消息15%）
             result["综合"] = self._calculate_composite_score_left(result)
 
-            # 9. 左侧启动信号识别
+            # 11. 左侧启动信号识别
             result["左侧信号"] = self._identify_left_breakout(df)
 
-            # 10. 生成交易信号
+            # 12. 生成交易信号
             result["信号"] = self._generate_left_signal(result)
 
         return result
@@ -1168,11 +1176,15 @@ class ComprehensiveWarfare:
         high_risk = any("过大" in r or "过长" in r or "超买" in r for r in risk_warnings)
         extreme_risk = any("谨慎追高" in r or "中后段" in r for r in risk_warnings)
 
+        # 获取追高警告（综合评分中设置的）
+        chase_warning = result.get("警告", "")
+        has_chase_warning = "BOLL" in chase_warning or "RSI" in chase_warning or "追高" in chase_warning
+
         # 1. 强烈启动信号
         if has_breakout and breakout_strength == "强烈" and composite_score >= 65:
-            if extreme_risk:
+            if extreme_risk or has_chase_warning:
                 signal = "持有/观察"
-                suggestion = "启动信号强烈但风险较高，等待回调"
+                suggestion = f"启动信号强烈但{('追高风险较高' if has_chase_warning else '风险较高')}，等待回调"
                 action_level = "观察"
             elif high_risk:
                 signal = "买入（轻仓）"
@@ -1185,8 +1197,9 @@ class ComprehensiveWarfare:
 
         # 2. 中等启动信号
         elif has_breakout and breakout_strength == "中等" and composite_score >= 60:
-            if extreme_risk:
+            if extreme_risk or has_chase_warning:
                 signal = "观望"
+                suggestion = f"追高风险{'较大' if has_chase_warning else '较高'}，等待更好买点"
             else:
                 signal = "加仓"
             suggestion = "波段信号确认，可以加仓"
@@ -1194,19 +1207,34 @@ class ComprehensiveWarfare:
 
         # 3. 弱启动信号
         elif has_breakout and composite_score >= 55:
-            signal = "持有/观察"
-            suggestion = "有启动迹象，继续观察"
-            action_level = "观察"
+            if has_chase_warning:
+                signal = "观望"
+                suggestion = "追高风险，暂不参与"
+                action_level = "备用"
+            else:
+                signal = "持有/观察"
+                suggestion = "有启动迹象，继续观察"
+                action_level = "观察"
 
         # 4. 评分高但无启动信号
         elif composite_score >= 70:
-            signal = "持有"
-            suggestion = "评分较高但无明确启动信号，等待"
-            action_level = "观察"
+            if has_chase_warning:
+                signal = "观望"
+                suggestion = "评分较高但追高风险，等待更好时机"
+                action_level = "备用"
+            else:
+                signal = "持有"
+                suggestion = "评分较高但无明确启动信号，等待"
+                action_level = "观察"
 
         # 5. 评分一般
         elif composite_score >= 50:
-            signal = "观望"
+            if has_chase_warning:
+                signal = "不考虑"
+                suggestion = "评分一般且追高风险，不建议参与"
+                action_level = "排除"
+            else:
+                signal = "观望"
             suggestion = "评分一般，继续等待机会"
             action_level = "备用"
 
@@ -1398,6 +1426,80 @@ class ComprehensiveWarfare:
             else:
                 result["警告"] = "价格创新低"
 
+        # ============ 追高过滤机制 (小金库 7.0) ============
+        # 获取各维度详情用于追高判断
+        position_detail = result.get("位置", {}).get("详情", {})
+        trend_detail = result.get("趋势", {}).get("详情", {})
+        momentum_detail = result.get("动量", {}).get("详情", {})
+
+        # 1. BOLL位置追高检查
+        boll_pos_str = position_detail.get("BOLL位置", "50%")
+        if isinstance(boll_pos_str, str) and "%" in boll_pos_str:
+            boll_pos = float(boll_pos_str.replace("%", ""))
+        else:
+            boll_pos = 50
+
+        if boll_pos > 90:
+            # 突破BOLL上轨，严重追高
+            total_score -= 25
+            if result.get("警告"):
+                result["警告"] += " | BOLL突破上轨"
+            else:
+                result["警告"] = "BOLL突破上轨(追高风险)"
+        elif boll_pos > 85:
+            # 接近BOLL上轨，追高风险
+            total_score -= 15
+            if result.get("警告"):
+                result["警告"] += " | BOLL接近上轨"
+            else:
+                result["警告"] = "BOLL接近上轨"
+
+        # 2. RSI超买检查
+        rsi_val = momentum_detail.get("RSI", 50)
+        if rsi_val > 75:
+            total_score -= 15
+            if result.get("警告"):
+                result["警告"] += " | RSI严重超买"
+            else:
+                result["警告"] = "RSI超买"
+        elif rsi_val > 70:
+            total_score -= 10
+            if result.get("警告"):
+                result["警告"] += " | RSI偏高"
+            else:
+                result["警告"] = "RSI偏高"
+
+        # 3. 20日涨幅过大检查
+        change_20d_str = position_detail.get("20日涨幅", "0%")
+        if isinstance(change_20d_str, str) and "%" in change_20d_str:
+            change_20d = float(change_20d_str.replace("%", ""))
+        else:
+            change_20d = 0
+
+        if change_20d > 40:
+            total_score -= 20
+        elif change_20d > 30:
+            total_score -= 15
+        elif change_20d > 25:
+            total_score -= 10
+
+        # 4. 如果同时有多个追高信号，进一步降低
+        chase_signals = 0
+        if boll_pos > 85:
+            chase_signals += 1
+        if rsi_val > 70:
+            chase_signals += 1
+        if change_20d > 25:
+            chase_signals += 1
+
+        if chase_signals >= 2:
+            # 多个追高信号叠加
+            total_score -= 10
+            if result.get("警告"):
+                result["警告"] += " | 多重追高信号"
+            else:
+                result["警告"] = "多重追高信号"
+
         # 限制评分范围
         total_score = max(0, min(100, total_score))
 
@@ -1445,18 +1547,36 @@ class ComprehensiveWarfare:
         rsi_val = float(rsi[-1]) if len(rsi) > 0 else 50
         details["RSI"] = round(rsi_val, 2)
 
+        # 【v8.3整改】降低RSI超卖权重（避免接飞刀），增加右侧确认条件
+        # RSI超卖只代表超跌，不代表见底。需要阳线确认才算有效买点
         if rsi_val < 20:
-            score += 30
-            details["RSI信号"] = "深度超卖（强烈反弹信号）"
+            # 检查今日是否阳线（右侧确认）
+            pct_today = df['pct_change'].astype(float).values[-1] if 'pct_change' in df.columns and len(df) > 0 else 0
+            if pct_today > 0:
+                score += 20  # 超卖 + 阳线 = 有效反弹信号
+                details["RSI信号"] = "深度超卖+阳线确认（有效）"
+            else:
+                score += 12  # 超卖但无阳线，降低权重
+                details["RSI信号"] = "深度超卖（等待确认）"
         elif rsi_val < 25:
-            score += 25
-            details["RSI信号"] = "严重超卖"
+            pct_today = df['pct_change'].astype(float).values[-1] if 'pct_change' in df.columns and len(df) > 0 else 0
+            if pct_today > 0:
+                score += 15
+                details["RSI信号"] = "超卖+阳线（反弹信号）"
+            else:
+                score += 10
+                details["RSI信号"] = "超卖（谨慎）"
         elif rsi_val < 30:
-            score += 20
-            details["RSI信号"] = "超卖（反弹概率大）"
+            pct_today = df['pct_change'].astype(float).values[-1] if 'pct_change' in df.columns and len(df) > 0 else 0
+            if pct_today > 0:
+                score += 10
+                details["RSI信号"] = "偏低+阳线（可关注）"
+            else:
+                score += 5
+                details["RSI信号"] = "偏低（观望）"
         elif rsi_val < 40:
-            score += 10
-            details["RSI信号"] = "偏低"
+            score += 3
+            details["RSI信号"] = "正常偏低"
         else:
             details["RSI信号"] = "正常/偏高"
 
@@ -1471,34 +1591,50 @@ class ComprehensiveWarfare:
             boll_pos = (current - lower) / (mid - lower) * 100 if mid > lower else 50
             details["BOLL位置"] = f"{boll_pos:.1f}%"
 
+            # 【v8.3整改】BOLL下轨也加入右侧确认（放量阳线才算有效支撑）
             if boll_pos < 10:
-                score += 25
-                details["BOLL信号"] = "BOLL下轨极度超卖（强烈支撑）"
+                pct_today = df['pct_change'].astype(float).values[-1] if 'pct_change' in df.columns and len(df) > 0 else 0
+                if pct_today > 0:
+                    score += 20
+                    details["BOLL信号"] = "BOLL下轨+阳线（有效支撑）"
+                else:
+                    score += 12
+                    details["BOLL信号"] = "BOLL下轨（谨慎）"
             elif boll_pos < 20:
-                score += 20
-                details["BOLL信号"] = "BOLL下轨附近（强支撑）"
+                pct_today = df['pct_change'].astype(float).values[-1] if 'pct_change' in df.columns and len(df) > 0 else 0
+                if pct_today > 0:
+                    score += 15
+                    details["BOLL信号"] = "BOLL下轨+阳线（支撑有效）"
+                else:
+                    score += 10
+                    details["BOLL信号"] = "BOLL下轨附近（观望）"
             elif boll_pos < 35:
-                score += 10
+                score += 8
                 details["BOLL信号"] = "BOLL中下轨"
             else:
-                details["BOLL信号"] = "BOLL中上轨"
+                score -= 5
+                details["BOLL信号"] = "BOLL中上轨（上涨空间有限）"
 
         # ============ 3. 乖离率（BIAS）- 偏离均线程度 ============
         ma20 = np.mean(closes[-20:]) if len(closes) >= 20 else closes[-1]
         bias = (closes[-1] - ma20) / ma20 * 100
         details["20日乖离率"] = round(bias, 2)
 
+        # 【v8.3整改】BIAS也需要阳线确认才加分
+        pct_today = df['pct_change'].astype(float).values[-1] if 'pct_change' in df.columns and len(df) > 0 else 0
+        has_right_confirm = pct_today > 0
+
         if bias < -15:
-            score += 25
-            details["BIAS信号"] = "深度负乖离（强烈反弹信号）"
+            score += 20 if has_right_confirm else 12
+            details["BIAS信号"] = "深度负乖离+阳线" if has_right_confirm else "深度负乖离（谨慎）"
         elif bias < -12:
-            score += 20
-            details["BIAS信号"] = "较大负乖离"
+            score += 15 if has_right_confirm else 10
+            details["BIAS信号"] = "较大负乖离+阳线" if has_right_confirm else "较大负乖离（观望）"
         elif bias < -8:
-            score += 15
-            details["BIAS信号"] = "负乖离"
+            score += 10 if has_right_confirm else 5
+            details["BIAS信号"] = "负乖离+阳线" if has_right_confirm else "负乖离（谨慎）"
         elif bias < -5:
-            score += 8
+            score += 5 if has_right_confirm else 3
             details["BIAS信号"] = "轻度负乖离"
         else:
             details["BIAS信号"] = "正常/正乖离"
@@ -1596,15 +1732,22 @@ class ComprehensiveWarfare:
             elif vol_ratio < 0.7:
                 score += 10
                 details["量价信号"] = "轻度缩量"
-            # 2. 底部放量反弹
+            # 2. 底部放量反弹 【v8.1修复】必须区分上涨 vs 下跌
             elif vol_ratio > 1.5:
                 price_change = pct_changes[-1] if len(pct_changes) > 0 else 0
-                if price_change > 0:
+                if price_change > 1:
                     score += 20
                     details["量价信号"] = "底部放量上涨（主力介入）"
+                elif price_change > 0:
+                    score += 15
+                    details["量价信号"] = "温和放量上涨"
+                elif price_change > -1:
+                    score += 5
+                    details["量价信号"] = "放量横盘（主力控盘）"
                 else:
-                    score += 10
-                    details["量价信号"] = "放量但股价未涨"
+                    # 放量下跌 > 1% → 主力出货嫌疑，扣分
+                    score -= 10
+                    details["量价信号"] = "放量下跌（警惕！可能是出货）"
 
             # ============ 持续缩量判断 ============
             recent_vol = volumes[-5:]
@@ -2015,37 +2158,68 @@ class ComprehensiveWarfare:
     # ==================== 综合评分计算（左侧） ====================
 
     def _calculate_composite_score_left(self, result: Dict[str, Any]) -> Dict[str, Any]:
-        """计算综合评分 - 左侧战法权重"""
-        # 左侧战法权重配置
+        """计算综合评分 - 左侧战法 v8.3 权重（简化版）
+
+        【v8.3整改】从9维度简化到5维度，删除数据不稳定和权重不清的维度：
+        - 删除"量在价先"：量能数据不稳定，权重不清
+        - 删除"热点消息"：消息面依赖外部API，数据不稳定
+        - 删除"情绪"（降为辅助）：涨停基因权重过高，已合并到量价
+        - 删除"位置"（合并到左侧）：BOLL下轨已在左侧维度评估
+
+        保留5个核心维度：
+        1. 趋势(15%) - 均线蓄势/收敛
+        2. 动量(20%) - MACD即将转多/KDJ
+        3. 左侧(25%) - 超跌反弹核心（含BOLL/BIAS）
+        4. 量价(20%) - 地量见底/底部放量
+        5. 形态(20%) - 锤子线/早晨之星
+        """
+        # 【v8.3整改】简化权重，强调动量和趋势
+        # 左侧战法的核心问题：只给超跌加分，不考虑"超跌后何时涨"
+        # 整改思路：动量>左侧，因为"已经启动的股票"比"超跌但没涨的股票"胜率更高
         weights = {
-            "趋势": 0.10,    # 均线蓄势
-            "动量": 0.20,    # MACD即将转多
-            "左侧": 0.25,    # 超跌反弹核心
-            "量价": 0.20,    # 地量见底
-            "形态": 0.10,    # 探底形态
-            "位置": 0.05,    # 低位支撑
-            "情绪": 0.10,    # 涨停基因
+            "趋势": 0.20,     # 【提升】趋势为王：均线多头+站上MA5
+            "动量": 0.30,     # 【提升】动量领先：MACD金叉+RSI顺势+量价配合
+            "左侧": 0.15,     # 【降低】超跌反弹：只做有右侧确认的超跌
+            "量价": 0.20,     # 【保持】量在价先：底部放量+量能健康
+            "形态": 0.15,     # 【降低】形态次要：锤子线/早晨之星
         }
 
+        # 【v8.3整改】只计算5个核心维度（删除不稳定维度）
         total_score = 0
-        for dim, weight in weights.items():
+        for dim in weights.keys():  # 只遍历5个核心维度
             if dim in result:
                 dim_score = result[dim].get("评分", 50)
-                total_score += dim_score * weight
+                total_score += dim_score * weights[dim]
+
+        # 加上右侧确认加成（v8.3保留）
+        total_score += right_confirm_bonus
 
         composite = round(total_score, 1)
 
+        # 【v8.3】追高过滤：检查RSI和BOLL是否超买
+        left_detail = result.get("左侧", {}).get("详情", {})
+        rsi_val = left_detail.get("RSI", 50)
+        boll_pos_str = left_detail.get("BOLL位置", "50%")
+        boll_pos = float(str(boll_pos_str).replace("%", "")) if "%" in str(boll_pos_str) else 50
+
+        if rsi_val > 70:
+            composite -= 10
+        if boll_pos > 85:
+            composite -= 10
+
+        composite = round(composite, 1)  # 修正：使用已扣分的composite
+
         # 左侧评级
-        if composite >= 75:
+        if composite >= 80:
             rating = "A"
-            rating_desc = "左侧强势买点"
-        elif composite >= 60:
+            rating_desc = "左侧强势买点（含右侧确认）"
+        elif composite >= 65:
             rating = "B+"
             rating_desc = "左侧较好买点"
-        elif composite >= 50:
+        elif composite >= 55:
             rating = "B"
             rating_desc = "左侧一般买点"
-        elif composite >= 35:
+        elif composite >= 40:
             rating = "C"
             rating_desc = "左侧观望"
         else:
@@ -2056,8 +2230,291 @@ class ComprehensiveWarfare:
             "评分": composite,
             "评级": rating,
             "描述": rating_desc,
-            "权重": weights
+            "权重": weights,
+            "右侧确认加成": right_confirm_bonus
         }
+
+    # ==================== 左侧战法：量在价先维度 ====================
+    # 【v8.0 新增核心维度】
+    # 核心理念：量能变化永远先于价格变化（主力吸筹 → 股价启动）
+    # 如果量已经放大但价格还没涨 = 最佳左侧买点（主力正在建仓）
+
+    def _evaluate_volume_leading_left(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """
+        量在价先维度评估 - 左侧战法 v8.0
+
+        核心信号：
+        1. 量先于价：连续2-3天放量，但价格还未大涨 = 主力悄悄吸筹
+        2. 底部堆量：价格在底部震荡，成交量却温和放大 = 吸筹尾声
+        3. 价跌量缩：价格下跌但成交量萎缩 = 卖压枯竭，健康回调
+        4. 放量突破前高：量能突破但价格还没新高 = 即将拉升
+        """
+        score = 50  # 基础分
+        details = {}
+
+        try:
+            volumes = df['volume'].astype(float).values
+            closes = df['close'].astype(float).values
+            highs = df['high'].astype(float).values
+
+            if len(volumes) < 20:
+                return {"评分": 50, "详情": {"量价信号": "数据不足"}}
+
+            # ============ 1. 量先于价判断（核心！）============
+            # 计算最近5天的量比和价格变化
+            vol_changes = []
+            price_changes = []
+            for i in range(-5, 0):
+                vol_t = volumes[i]
+                vol_prev = volumes[i-1] if i > -5 else volumes[i-1]
+                vol_chg = (vol_t - vol_prev) / vol_prev if vol_prev > 0 else 0
+                vol_changes.append(vol_chg)
+
+                price_t = closes[i]
+                price_prev = closes[i-1] if i > -5 else closes[i-1]
+                price_chg = (price_t - price_prev) / price_prev * 100 if price_prev > 0 else 0
+                price_changes.append(price_chg)
+
+            # 【v8.1修复】量先于价判断必须区分：放量上涨 vs 放量下跌
+            # 放量上涨或放量横盘 → 主力吸筹 ✅
+            # 放量下跌 → 主力出货 ❌
+            vol_leading_days = 0
+            vol_drop_days = 0  # 放量下跌天数（主力出货嫌疑）
+            for i in range(3):
+                vol_chg_i = vol_changes[-(i+1)]
+                price_chg_i = price_changes[-(i+1)]
+                # 放量且价格变化在±3%以内（量增价稳 = 吸筹）
+                if vol_chg_i > 0.1 and abs(price_chg_i) < 3:
+                    vol_leading_days += 1
+                # 放量且价格下跌 > 1%（放量出货嫌疑）
+                if vol_chg_i > 0.1 and price_chg_i < -1:
+                    vol_drop_days += 1
+
+            details["量增价稳天数"] = vol_leading_days
+            details["放量下跌天数"] = vol_drop_days
+
+            # 放量下跌超过1天 → 主力出货嫌疑，大幅扣分
+            if vol_drop_days >= 2:
+                score -= 20
+                details["量在价先信号"] = "疑似主力出货（放量下跌）"
+            elif vol_drop_days == 1:
+                score -= 10
+                details["量在价先信号"] = "放量但下跌（警惕）"
+            elif vol_leading_days >= 2:
+                # 放量但价格稳定或微涨 → 主力吸筹
+                score += 30
+                details["量在价先信号"] = "明显（主力悄悄吸筹）"
+            elif vol_leading_days == 1:
+                score += 15
+                details["量在价先信号"] = "存在"
+
+            # ============ 2. 底部堆量判断 ============
+            # 【v8.1修复】底部堆量必须检查价格是否止跌
+            # 价格在低位 + 止跌/微涨 + 放量 → 主力建仓 ✅
+            # 价格在低位 + 继续下跌 + 放量 → 主力出货 ❌
+            vol_10avg = np.mean(volumes[-10:])
+            vol_20avg = np.mean(volumes[-20:]) if len(volumes) >= 20 else np.mean(volumes)
+            vol_bottom_ratio = vol_10avg / vol_20avg if vol_20avg > 0 else 1
+
+            details["底部堆量比"] = round(vol_bottom_ratio, 2)
+
+            # 计算近5日价格趋势（判断是否止跌）
+            recent_5d_trend = (closes[-1] - closes[-6]) / closes[-6] * 100 if len(closes) >= 6 else 0
+            recent_5d_vol_avg = np.mean(vol_changes[-5:])
+            price_20min = np.min(closes[-20:])
+            price_20max = np.max(closes[-20:])
+            price_current = closes[-1]
+            price_position = (price_current - price_20min) / (price_20max - price_20min) if price_20max > price_20min else 0.5
+
+            # 近3日是否有放量下跌（关键判断）
+            has_drop_volume = any(vc > 0.1 and pc < -0.5 for vc, pc in zip(vol_changes[-3:], price_changes[-3:]))
+
+            if vol_bottom_ratio > 1.3 and price_position < 0.4:
+                if has_drop_volume:
+                    # 价格在低位但还在放量下跌 = 主力出货
+                    score -= 15
+                    details["量价信号"] = "低位放量下跌（警惕！可能是出货）"
+                else:
+                    # 价格在低位且没有继续放量下跌 = 主力吸筹
+                    score += 25
+                    details["量价信号"] = "底部堆量（主力建仓尾声）"
+            elif vol_bottom_ratio > 1.1 and price_position < 0.5:
+                if has_drop_volume:
+                    score -= 5
+                    details["量价信号"] = "缩量整理中（价格仍在下跌）"
+                else:
+                    score += 15
+                    details["量价信号"] = "温和堆量"
+            elif vol_bottom_ratio > 1.5 and price_position > 0.7:
+                score += 10
+                details["量价信号"] = "高位放量（警惕）"
+            elif vol_bottom_ratio < 0.7:
+                score += 5
+                details["量价信号"] = "极度缩量（观望）"
+            else:
+                details["量价信号"] = "量能正常"
+
+            # ============ 3. 价跌量缩（健康回调）============
+            price_drop_days = 0
+            for i in range(-3, 0):
+                if price_changes[i] < -0.5 and vol_changes[i] < 0:
+                    price_drop_days += 1
+
+            if price_drop_days >= 2:
+                score += 15
+                details["健康回调"] = "是（价跌量缩，卖压枯竭）"
+            else:
+                details["健康回调"] = "否"
+
+            # ============ 4. 放量突破前高（量先于价突破）============
+            vol_today = volumes[-1]
+            vol_5avg = np.mean(volumes[-6:-1])
+            vol_ratio_today = vol_today / vol_5avg if vol_5avg > 0 else 1
+
+            high_20 = np.max(highs[-20:-1])
+            pct_chg_today = price_changes[-1] if price_changes else 0
+
+            if closes[-1] < high_20 * 1.02 and vol_ratio_today > 1.5:
+                if pct_chg_today > 0:
+                    # 价格还没突破但今日上涨 + 放量 → 启动在即
+                    score += 20
+                    details["突破前兆"] = "放量上涨未突破（启动在即）"
+                elif pct_chg_today > -1:
+                    # 价格还没突破且今日小幅下跌 + 放量 → 吸筹中
+                    score += 10
+                    details["突破前兆"] = "放量横盘（主力吸筹）"
+                else:
+                    # 价格还没突破但今日下跌 + 放量 → 可能是出货
+                    score -= 5
+                    details["突破前兆"] = "放量下跌（警惕）"
+            elif closes[-1] >= high_20 and vol_ratio_today > 1.3:
+                # 价格放量突破
+                if pct_chg_today > 0:
+                    score += 15
+                    details["突破确认"] = "放量上涨突破（已启动）"
+                else:
+                    score += 5
+                    details["突破确认"] = "放量突破（但价格上涨乏力）"
+
+            # ============ 5. 近5日量能趋势 ============
+            vol_trend = "放大" if vol_changes[-1] > 0.1 else ("缩小" if vol_changes[-1] < -0.1 else "平稳")
+            details["近5日量能"] = vol_trend
+
+        except Exception as e:
+            logger.debug(f"量在价先评估异常: {e}")
+            details["量价信号"] = "评估异常"
+
+        score = max(0, min(100, score))
+        details["评分"] = score
+        return {"评分": score, "详情": details}
+
+    # ==================== 左侧战法：热点消息维度 ====================
+    # 【v8.0 新增核心维度】
+    # 核心理念：技术面的左侧买点 + 消息面的催化剂 = 快速拉升
+    # 如果没有利好消息驱动，左侧买点可能横盘很久
+    # 有热点题材的左侧股票，更容易快速反弹
+
+    def _evaluate_news_hot_left(self, df: pd.DataFrame, code: str = "") -> Dict[str, Any]:
+        """
+        热点消息维度评估 - 左侧战法 v8.0
+
+        核心：
+        1. 个股新闻情绪（利好/利空）
+        2. 公告信息（业绩、并购等重大利好）
+        3. 所属概念板块是否属于当前热点
+        4. 涨停基因（主力资金活跃度）
+        """
+        score = 50  # 基础分
+        details = {}
+
+        try:
+            closes = df['close'].astype(float).values
+            pct_changes = df['pct_change'].astype(float).values if 'pct_change' in df.columns else df['close'].pct_change().values * 100
+
+            # ============ 1. 涨停基因（主力活跃度）============
+            limit_up_count = 0
+            limit_up_dates = []
+            for i, pct in enumerate(pct_changes[-10:]):
+                if pct >= 9.5:
+                    limit_up_count += 1
+                    limit_up_dates.append(i)
+
+            details["10日涨停次数"] = limit_up_count
+
+            if limit_up_count >= 2:
+                score += 25
+                details["主力活跃"] = "极强（多次涨停）"
+            elif limit_up_count == 1:
+                score += 15
+                details["主力活跃"] = "有（近期涨停）"
+            else:
+                # 接近涨停检测
+                near_limit = sum(1 for pct in pct_changes[-10:] if pct >= 7)
+                if near_limit >= 3:
+                    score += 10
+                    details["主力活跃"] = "较强（多次接近涨停）"
+                elif near_limit >= 1:
+                    score += 5
+                    details["主力活跃"] = "一般"
+
+            # ============ 2. 个股新闻情绪（优先使用预取数据）============
+            if code:
+                # 优先使用预取数据（screener._screen_realtime 已预取）
+                news_data = None
+                if hasattr(self, '_current_info') and self._current_info:
+                    news_data = self._current_info.get('_news_sentiment')
+
+                if news_data:
+                    # 使用预取数据（简化格式：{count, keywords}）
+                    news_count = news_data.get('count', 0)
+                    keywords = news_data.get('keywords', [])
+                    details["新闻数量"] = news_count
+                    details["关键词"] = keywords[:3]
+
+                    # 利好/利空关键词检测
+                    positive_kw = ['业绩', '增长', '订单', '合作', '突破', '中标', '研发', '政策', '增持', '回购']
+                    negative_kw = ['业绩下降', '亏损', '减持', '诉讼', '风险', '终止', '违规', '减持']
+
+                    pos_found = [kw for kw in keywords if any(p in str(kw) for p in positive_kw)]
+                    neg_found = [kw for kw in keywords if any(n in str(kw) for n in negative_kw)]
+
+                    if pos_found:
+                        score += 20
+                        details["消息面信号"] = "利好"
+                        details["利好因素"] = pos_found
+                    elif neg_found:
+                        score -= 15
+                        details["消息面信号"] = "利空"
+                        details["风险因素"] = neg_found
+                    elif news_count > 0:
+                        score += 5
+                        details["消息面信号"] = "中性"
+                        details["关注度"] = f"有{news_count}条新闻"
+                    else:
+                        details["消息面信号"] = "无新闻"
+                else:
+                    details["消息面"] = "无预取数据"
+            else:
+                details["消息面"] = "无股票代码"
+
+            # ============ 3. 连续上涨/下跌（动量反转）============
+            up_days = sum(1 for p in pct_changes[-5:] if p > 0)
+            details["5日上涨天数"] = up_days
+
+            if up_days == 0:
+                score += 10
+                details["连续下跌"] = "是（反弹概率大）"
+            elif up_days >= 4:
+                score -= 5
+                details["连续上涨"] = "是（左侧机会减少）"
+
+        except Exception as e:
+            logger.debug(f"热点消息评估异常: {e}")
+            details["消息面"] = "评估异常"
+
+        score = max(0, min(100, score))
+        details["评分"] = score
+        return {"评分": score, "详情": details}
 
     # ==================== 左侧买点有效性判断 ====================
 
@@ -2068,11 +2525,18 @@ class ComprehensiveWarfare:
         李成刚核心思想：买在分歧，卖在一致
         - 排除大涨后的股票（涨停不追）
         - 确认是否真的处于超跌状态
+        - 【v8.2整改】增加右侧确认：左侧信号 + 右侧确认 = 更高胜率
         """
         validation = {
             "有效": True,
             "原因": [],
-            "警告": []
+            "警告": [],
+            "右侧确认": {  # 【v8.2新增】右侧确认加分
+                "RSI超卖_次日阳线": False,
+                "地量_次日放量": False,
+                "MACD金叉_站上MA5": False,
+                "综合确认": False,  # 多个右侧确认同时满足 = 高胜率
+            }
         }
 
         details = result.get("左侧", {}).get("详情", {})
@@ -2140,6 +2604,68 @@ class ComprehensiveWarfare:
                 elif today_change > 5:
                     validation["警告"].append(f"今日涨幅{int(today_change)}%，已是右侧行情")
 
+        # ============ 【v8.2新增】6. 右侧确认检查 =============
+        # 核心：左侧信号 + 右侧确认 = 更高胜率
+        # 需要至少一个右侧确认才能算有效买点
+
+        if "_df" in result and len(result["_df"]) >= 5:
+            df = result["_df"]
+            closes = df['close'].astype(float).values
+            volumes = df['volume'].astype(float).values
+            pct_change_arr = df['pct_change'].astype(float).values if 'pct_change' in df.columns else np.diff(closes) / closes[:-1] * 100
+
+            # 6.1 RSI超卖 + 次日收阳线
+            # 昨日RSI超卖，今日收阳线 = 反弹启动确认
+            if rsi < 35 and len(closes) >= 2:
+                yesterday_close = closes[-2]
+                today_close = closes[-1]
+                if today_close > yesterday_close:  # 今日收阳
+                    validation["右侧确认"]["RSI超卖_次日阳线"] = True
+                    validation["原因"].append("RSI超卖+今日收阳（右侧确认）")
+
+            # 6.2 地量 + 次日放量上涨
+            # 昨日量比<0.5，今日量比>1且上涨 = 底部启动确认
+            if len(closes) >= 3:
+                vol_yes_avg = np.mean(volumes[-4:-1]) if len(volumes) >= 4 else np.mean(volumes[:-1])
+                vol_today = volumes[-1]
+                vol_yesterday = volumes[-2]
+                vol_ratio_yesterday = vol_yesterday / vol_5avg if (len(volumes) >= 6 and (vol_5avg := np.mean(volumes[-6:-1])) > 0) else 1.0
+                vol_ratio_today = vol_today / (np.mean(volumes[-6:-1]) if len(volumes) >= 6 else np.mean(volumes[:-1]))
+
+                if vol_ratio_yesterday < 0.5 and vol_ratio_today > 1.2 and pct_change_arr[-1] > 0:
+                    validation["右侧确认"]["地量_次日放量"] = True
+                    validation["原因"].append("地量+今日放量上涨（右侧确认）")
+
+            # 6.3 MACD金叉 + 价格站上MA5
+            # MACD在0轴下方金叉 + 价格站上MA5 = 启动确认
+            macd, signal, hist = self._calc_macd(closes)
+            if len(macd) >= 2:
+                macd_val = float(macd[-1])
+                macd_prev = float(macd[-2])
+                signal_val = float(signal[-1])
+                ma5 = np.mean(closes[-5:])
+                current_price = closes[-1]
+
+                # 金叉确认（DIF上穿DEA）
+                if macd_prev <= signal_val and macd_val > signal_val:
+                    if current_price > ma5:
+                        validation["右侧确认"]["MACD金叉_站上MA5"] = True
+                        validation["原因"].append("MACD金叉+价格站上MA5（右侧确认）")
+
+            # 综合右侧确认：多个确认同时满足 = 高胜率
+            confirm_count = sum([
+                validation["右侧确认"]["RSI超卖_次日阳线"],
+                validation["右侧确认"]["地量_次日放量"],
+                validation["右侧确认"]["MACD金叉_站上MA5"]
+            ])
+            if confirm_count >= 2:
+                validation["右侧确认"]["综合确认"] = True
+                validation["原因"].append(f"多信号右侧确认（{confirm_count}个），高胜率")
+
+        # 如果没有任何右侧确认，增加警告但不禁用
+        if not any(validation["右侧确认"].values()) and validation["有效"]:
+            validation["警告"].append("无右侧确认，建议等待确认后再买入")
+
         return validation
 
     # ==================== 交易信号生成（左侧） ====================
@@ -2162,16 +2688,26 @@ class ComprehensiveWarfare:
         is_valid = entry_validation.get("有效", True)
         entry_warnings = entry_validation.get("警告", [])
 
-        # ============ 操作信号判断 ============
-        # 只有在买点有效的情况下才推荐"左侧买入"
-        if composite >= 65 and is_valid:
-            operation = "左侧买入（明日观察）"
+        # ============ 【v8.2整改】操作信号判断 ============
+        # 调整预期：左侧交易不是"马上涨"，而是"1-3个月内大概率盈利"
+
+        # 检查右侧确认情况
+        right_confirm = entry_validation.get("右侧确认", {})
+        has_right_confirm = right_confirm.get("综合确认", False)
+
+        # 只有在买点有效 + 有右侧确认的情况下才推荐"左侧买入"
+        if composite >= 65 and is_valid and has_right_confirm:
+            operation = "左侧买入（右侧确认，高胜率）"
+        elif composite >= 65 and is_valid:
+            operation = "左侧买入（建议等待右侧确认）"
         elif composite >= 65 and not is_valid:
             # 评分够但买点无效，改为观望
             operation = "观望（追高风险）"
         elif composite >= 55:
-            if left_score >= 60 and is_valid:
-                operation = "左侧买入（明日观察）"
+            if left_score >= 60 and is_valid and has_right_confirm:
+                operation = "左侧买入（右侧确认，可参与）"
+            elif left_score >= 60 and is_valid:
+                operation = "左侧买入（建议等待确认）"
             else:
                 operation = "观望"
         elif composite >= 40:

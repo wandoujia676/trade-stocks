@@ -192,7 +192,7 @@ class RealtimeFetcher:
 
                         results.append({
                             'code': code,
-                            'name': parts[0],
+                            'name': parts[0].strip() if parts[0] else '',
                             'current': current,
                             'change': round(change, 2),
                             'pct_chg': round(pct_chg, 2),

@@ -1365,6 +1365,86 @@
           ]
         }
       ]
+    },
+    {
+      "date": "2026-04-19",
+      "picks_date": "2026-04-19 20:47:31",
+      "stocks": [
+        {
+          "code": "301256",
+          "name": "",
+          "score": 87.5,
+          "signal": "买入",
+          "pick_price": 13.88,
+          "today_price": 13.88,
+          "change_pct": 4.360902255639098,
+          "result": "成功",
+          "reason": "涨幅较大(+4.36%), 量比放大(2.1)",
+          "dimensions": [
+            "量价",
+            "形态"
+          ],
+          "pick_reasons": [
+            "双金叉",
+            "MACD红柱放大+多头",
+            "突破整理高点+放量"
+          ]
+        },
+        {
+          "code": "002081",
+          "name": "",
+          "score": 86.5,
+          "signal": "加仓",
+          "pick_price": 3.71,
+          "today_price": 3.71,
+          "change_pct": 10.089020771513349,
+          "result": "成功",
+          "reason": "涨幅较大(+10.09%), 量比放大(4.1)",
+          "dimensions": [
+            "量价",
+            "形态"
+          ],
+          "pick_reasons": [
+            "双金叉",
+            "MACD红柱放大+多头",
+            "突破整理高点+放量"
+          ]
+        },
+        {
+          "code": "300901",
+          "name": "",
+          "score": 80.7,
+          "signal": "继续持有",
+          "pick_price": 14.38,
+          "today_price": 14.38,
+          "change_pct": -1.4393420150788148,
+          "result": "失败",
+          "reason": "量比萎缩(0.7)",
+          "dimensions": [
+            "位置"
+          ],
+          "pick_reasons": [
+            "BOLL位置1%处于低位，支撑有效"
+          ]
+        },
+        {
+          "code": "002235",
+          "name": "",
+          "score": 71.8,
+          "signal": "继续持有",
+          "pick_price": 9.46,
+          "today_price": 9.46,
+          "change_pct": -2.8747433264886997,
+          "result": "失败",
+          "reason": "量比萎缩(0.6), 跌幅较大(-2.87%)",
+          "dimensions": [
+            "位置"
+          ],
+          "pick_reasons": [
+            "BOLL位置17%处于低位，支撑有效"
+          ]
+        }
+      ]
     }
   ],
   "dimension_stats": {}
