@@ -273,8 +273,10 @@ class Backtester:
                 composite = result.get("综合", {}).get("评分", 0)
                 signal = result.get("信号", {})
 
-                # 只选择评分够高的
-                if composite >= 55 and "买入" in signal.get("操作", ""):
+                # 【v9.0 Step 3b 修复】回测只看评分阈值，不看 signal 操作文案
+                # 原因：warfare._generate_left_signal 会因为"追高风险"等把买入信号降级为"观望"，
+                # 但回测目的是验证评分体系的有效性。过严的过滤会导致 0 交易（见 quick 测试）。
+                if composite >= 55:
                     results.append({
                         "code": code,
                         "score": composite,
