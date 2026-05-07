@@ -320,7 +320,18 @@ class Backtester:
             交易记录
         """
         code = stock["code"]
-        buy_price = stock["signal"].get("明日买入条件", {}).get("价格", 0)
+
+        # 【v9.0 修复】warfare 的 signal 没有"明日买入条件.价格"字段
+        # 回测简化假设：用选股日收盘价作为次日买入价
+        buy_price = 0
+        if "明日买入条件" in stock["signal"] and "价格" in stock["signal"]["明日买入条件"]:
+            buy_price = stock["signal"]["明日买入条件"]["价格"]
+        else:
+            # 降级：从 result 的 _df 取最后一天收盘价
+            result = stock.get("result", {})
+            df = result.get("_df")
+            if df is not None and len(df) > 0:
+                buy_price = float(df['close'].iloc[-1])
 
         if buy_price <= 0:
             return None
