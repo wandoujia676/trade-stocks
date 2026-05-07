@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 # 小金库版本
-VERSION = "8.1"
+VERSION = "9.0"
 
 # 版本更新记录
 VERSION_LOG = [
@@ -265,7 +265,7 @@ def cmd_analyze(args):
     kdj = tech.get('KDJ', {})
     if 'K' in kdj:
         print(f"KDJ: K={kdj['K']}, D={kdj['D']}, J={kdj['J']}")
-        print(f"  信号: {kdj.get('信号', '')} | 交叉: {kdj.get('交叉', '')}")
+        print(f"  信号: {kdj.get('信号', '')}")
 
     boll = tech.get('BOLL', {})
     if '中轨' in boll:
@@ -670,6 +670,102 @@ def cmd_limit_up(args):
             print(f"  ... 还有 {len(stocks) - 10} 只")
 
 
+def cmd_observation(args):
+    """观察池命令 - 小金库 9.0 右侧确认机制"""
+    from observation_tracker import get_observation_tracker
+    from datetime import datetime
+
+    tracker = get_observation_tracker()
+    subcommand = args.subcommand
+
+    if subcommand == "list":
+        # 列出观察池
+        status = args.status if hasattr(args, 'status') else None
+        stocks = tracker.list_by_status(status)
+
+        if not stocks:
+            print(f"\n观察池为空（状态: {status or '全部'}）")
+            return
+
+        print(f"\n{'='*80}")
+        print(f"观察池 | 状态: {status or '全部'} | 共 {len(stocks)} 只")
+        print(f"{'='*80}\n")
+
+        for stock in stocks:
+            code = stock["代码"]
+            name = stock["名称"]
+            entry_date = stock["入池日期"]
+            entry_price = stock["入池价"]
+            entry_signal = stock["入池信号"]
+            entry_score = stock["入池评分"]
+            status_val = stock["状态"]
+            confirm_window = stock.get("确认窗口", [])
+            confirm_result = stock.get("确认结果")
+
+            status_icon = {"pending": "⏳", "confirmed": "✅", "rejected": "❌"}.get(status_val, "")
+
+            print(f"{status_icon} {code} {name}")
+            print(f"  入池: {entry_date} @ {entry_price:.2f} | 评分: {entry_score} | 信号: {entry_signal}")
+            print(f"  确认窗口: {', '.join(confirm_window)}")
+
+            if confirm_result:
+                print(f"  确认结果: {confirm_result.get('reason', '')}")
+                details = confirm_result.get('details', {})
+                if details:
+                    print(f"    开盘: {details.get('开盘价', 0):.2f} | 收盘: {details.get('收盘价', 0):.2f} | 量比: {details.get('量比', 0):.2f}")
+
+            print()
+
+    elif subcommand == "check":
+        # 检查确认
+        print(f"\n{'='*80}")
+        print(f"观察池确认检查 | 日期: {datetime.now().strftime('%Y-%m-%d')}")
+        print(f"{'='*80}\n")
+
+        result = tracker.check_all()
+
+        print(f"✅ 确认通过: {len(result['confirmed'])} 只")
+        for stock in result['confirmed']:
+            print(f"  {stock['代码']} {stock['名称']} - {stock['确认结果']['reason']}")
+
+        print(f"\n❌ 退池: {len(result['rejected'])} 只")
+        for stock in result['rejected']:
+            print(f"  {stock['代码']} {stock['名称']} - {stock['确认结果']['reason']}")
+
+        print(f"\n⏳ 继续等待: {len(result['pending'])} 只")
+        for stock in result['pending']:
+            print(f"  {stock['代码']} {stock['名称']}")
+
+        print()
+
+    elif subcommand == "add":
+        # 手动添加
+        code = args.code
+        name = args.name if hasattr(args, 'name') and args.name else code
+        signal = args.signal if hasattr(args, 'signal') and args.signal else "手动添加"
+        price = args.price if hasattr(args, 'price') and args.price else 0.0
+        score = args.score if hasattr(args, 'score') and args.score else 60
+
+        success = tracker.add(code, name, signal, price, score)
+        if success:
+            print(f"✅ {code} {name} 已加入观察池")
+        else:
+            print(f"❌ {code} 添加失败（可能已存在）")
+
+    elif subcommand == "remove":
+        # 手动移除
+        code = args.code
+        success = tracker.remove(code)
+        if success:
+            print(f"✅ {code} 已从观察池移除")
+        else:
+            print(f"❌ {code} 移除失败（不在观察池中）")
+
+    else:
+        print("未知子命令，请使用 list/check/add/remove")
+
+
+
 def show_version():
     """显示版本信息"""
     print(f"╔══════════════════════════════════════════╗")
@@ -759,6 +855,25 @@ def main():
     parser_limit.add_argument("--type", "-t", choices=["up", "down"], default="up", help="类型: up=涨停, down=跌停")
     parser_limit.add_argument("--date", "-d", default=None, help="日期 YYYYMMDD")
 
+    # 观察池命令（小金库 9.0）
+    parser_obs = subparsers.add_parser("observation", help="观察池管理（右侧确认机制）")
+    subparsers_obs = parser_obs.add_subparsers(dest="subcommand", help="观察池子命令")
+
+    parser_obs_list = subparsers_obs.add_parser("list", help="列出观察池")
+    parser_obs_list.add_argument("--status", "-s", choices=["pending", "confirmed", "rejected"], help="状态筛选")
+
+    parser_obs_check = subparsers_obs.add_parser("check", help="检查确认（次日运行）")
+
+    parser_obs_add = subparsers_obs.add_parser("add", help="手动添加")
+    parser_obs_add.add_argument("code", help="股票代码")
+    parser_obs_add.add_argument("--name", "-n", help="股票名称")
+    parser_obs_add.add_argument("--signal", help="入池信号")
+    parser_obs_add.add_argument("--price", "-p", type=float, help="入池价格")
+    parser_obs_add.add_argument("--score", type=float, help="入池评分")
+
+    parser_obs_remove = subparsers_obs.add_parser("remove", help="手动移除")
+    parser_obs_remove.add_argument("code", help="股票代码")
+
     args = parser.parse_args()
 
     if args.command == "screener":
@@ -777,6 +892,8 @@ def main():
         cmd_announcement(args)
     elif args.command == "limit-up":
         cmd_limit_up(args)
+    elif args.command == "observation":
+        cmd_observation(args)
     else:
         parser.print_help()
 

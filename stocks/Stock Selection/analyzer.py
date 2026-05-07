@@ -189,13 +189,11 @@ class StockAnalyzer:
         signal_val = float(signal_line[-1])
         hist_val = float(hist[-1])
 
-        # 金叉死叉判断
+        # 金叉判断（删除死叉，避免滞后信号）
         if len(macd) >= 2:
             prev_macd, prev_signal = float(macd[-2]), float(signal_line[-2])
             if macd_val > signal_val and prev_macd <= prev_signal:
                交叉信号 = "金叉"
-            elif macd_val < signal_val and prev_macd >= prev_signal:
-                交叉信号 = "死叉"
             else:
                 交叉信号 = "无交叉"
         else:

@@ -4,14 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-小金库 (Xiaojinku) is an intelligent stock selection and verification system based on a **pure left-side trading strategy** (纯左侧战法). The core idea: buy at divergence, sell at consensus — identifying stocks before they rally significantly and waiting for rebounds or reversals.
+小金库 (Xiaojinku) is an intelligent stock selection and verification system based on a **pure left-side trading strategy** (纯左侧战法) with **right-side confirmation** (右侧确认机制, v9.0). The core idea: buy at divergence, sell at consensus — identifying stocks before they rally significantly, then waiting for right-side confirmation before entering positions.
 
 ## Architecture
 
 ```
-三层候选池体系:
-全市场 5000+ 股票 → 月度候选池(100只) → 周选自选股(5-20只) → 出击股票(~5只)
-    monthly_generator.py      screener.py         selection_tracker.py
+三层候选池体系 + 观察池（v9.0新增）:
+全市场 5000+ 股票 → 月度候选池(100只) → 周选自选股(5-20只) → 观察池(左侧信号) → 出击股票(~5只)
+    monthly_generator.py      screener.py         observation_tracker.py   selection_tracker.py
+                                          ↓                    ↓
+                                   左侧维度≥60分          T+1~T+3 右侧确认
+                                   自动入观察池          (实体阳+量比>1.5)
                                           ↓
                                      每日15:30验证
                                           ↓
@@ -83,27 +86,51 @@ python stocks/Stock Selection/cli.py limit-up --type up      # 涨停原因追�
 python stocks/Stock Selection/cli.py limit-up --type down    # 跌停原因追踪
 ```
 
+### Observation Pool commands (小金库 9.0)
+```bash
+python stocks/Stock Selection/cli.py observation list                   # 列出观察池
+python stocks/Stock Selection/cli.py observation list --status pending  # 仅未确认
+python stocks/Stock Selection/cli.py observation check                  # 次日检查确认
+python stocks/Stock Selection/cli.py observation add <code>             # 手动添加
+python stocks/Stock Selection/cli.py observation remove <code>          # 手动移除
+```
+
 ### Auto-screening (scheduled tasks)
 ```bash
 python stocks/Stock Selection/auto_screener.py        # weekly (Wed 14:00)
 python stocks/Stock Selection/auto_candidate_pool.py # monthly (15th, 28th 14:00)
 ```
 
-## Pure Left-Side Strategy (纯左侧战法)
+## Pure Left-Side Strategy (纯左侧战法) + Right-Side Confirmation (v9.0)
 
-Core principle: Buy at divergence, sell at consensus. Identify stocks before significant rallies and wait for rebounds or reversals.
+Core principle: Buy at divergence, sell at consensus. Identify stocks before significant rallies, then wait for right-side confirmation before entering.
 
-### Seven-Dimension Scoring System (小金库 6.4)
+### Right-Side Confirmation Mechanism (v9.0)
 
-| Dimension | Weight | Left-Side Core Signals |
-|-----------|--------|------------------------|
-| 左侧 (Left-Side) | 25% | RSI<30, BOLL lower rail<15%, negative deviation |
-| 动量 (Momentum) | 15% | MACD green column shrinking, golden cross approaching |
-| 量价 (Volume-Price) | 15% | Ground volume bottom, bottom volume expansion |
-| 趋势 (Trend) | 25% | MA convergence/accumulation, downtrend收敛 → about to turn up |
+**Workflow:**
+1. Left-side signal triggers (left-side dimension ≥60) → Auto-add to observation pool
+2. Wait T+1~T+3 trading days for right-side confirmation
+3. Confirmation criteria: **Entity bullish candle (close > open) + Volume ratio > 1.5**
+4. Confirmed → Promote to attack pool | Rejected → Exit pool
+
+**Confirmation Window:** T+1 ~ T+3 (3 trading days)
+- Any day within window meets criteria → Confirmed
+- All 3 days fail → Rejected and exit pool
+
+### Five-Dimension Scoring System (v9.0 - Lagging Indicators Removed)
+
+| Dimension | Weight (v9.0) | Core Signals |
+|-----------|---------------|--------------|
+| 趋势 (Trend) | 22% | MA convergence/accumulation, downtrend收敛 → about to turn up |
+| 动量 (Momentum) | 25% | MACD green column shrinking, golden cross approaching (death cross removed) |
+| 左侧 (Left-Side) | 16% | RSI<30, BOLL lower rail<15%, negative deviation |
+| 量价 (Volume-Price) | 22% | Ground volume bottom, bottom volume expansion |
 | 形态 (Pattern) | 15% | Hammer line, morning star pattern |
-| 位置 (Position) | 10% | Low position, near BOLL lower rail |
-| 情绪 (Sentiment) | 5% | Limit-up gene, oversold + 消息面情绪 (利好/利空) |
+
+**v9.0 Changes:**
+- ❌ Removed lagging indicators: MACD death cross, green column duration, KDJ death cross
+- ✅ Weight rebalancing: Momentum 30%→25%, Trend/Volume-Price 20%→22%, Left-Side 15%→16%
+- ✅ Added observation pool for right-side confirmation
 
 ### Left-Side Breakout Signals
 
@@ -129,7 +156,8 @@ Stock qualifies as "left-side breakout" when ANY condition is met:
 - `stocks/Stock Selection/data_fetcher.py` - Unified data fetching (Tushare/AKShare/Baostock) + NewsFetcher (消息面)
 - `stocks/Stock Selection/realtime_fetcher.py` - Real-time quotes (Sina/QQ APIs)
 - `stocks/Stock Selection/screener.py` - Pure left-side screening engine
-- `stocks/Stock Selection/warfare.py` - Left-side scoring (completely rewritten in 5.1)
+- `stocks/Stock Selection/warfare.py` - Left-side scoring (v9.0: lagging indicators removed)
+- `stocks/Stock Selection/observation_tracker.py` - Observation pool tracker (v9.0 new)
 - `stocks/Stock Selection/selection_tracker.py` - Generates "出击" stock list
 - `stocks/Stock Verification/warfare_config.json` - Dynamic weights after feedback
 - `stocks/Stock Selection/View Results/` - Output directory for screener results
@@ -142,6 +170,7 @@ stocks/Stock Selection/View Results/
 ├── monthly_candidate_pool.json  # JSON backup
 ├── weekly_watchlist.txt         # Weekly watchlist (5-20 stocks)
 ├── weekly_watchlist.json        # JSON backup
+├── 观察池.json                   # Observation pool (v9.0 new)
 ├── 出击.txt                     # Actionable stocks JSON (~5 stocks)
 └── 出击.报告.txt                # Actionable stocks report
 ```
@@ -160,8 +189,9 @@ stocks/Stock Selection/View Results/
 
 From 《一买即涨》《量学》《短线操盘》:
 - High-position 十字星, 长上影线, 大阴线
-- 均线死叉, MACD死叉
 - 缩量滞涨, 跌破20日均线, 量价背离
+
+**Note (v9.0):** Death cross signals (均线死叉, MACD死叉) removed as lagging indicators.
 
 ## Weight Feedback Loop
 

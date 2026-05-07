@@ -266,6 +266,9 @@ class StockScreener:
 
         scored.sort(key=lambda x: x["总分"], reverse=True)
 
+        # 【v9.0新增】步骤7: 左侧强信号自动入观察池
+        self._auto_add_to_observation_pool(scored)
+
         logger.info(f"实时选股完成，返回 {min(len(scored), limit)} 只")
         return scored[:limit]
 
@@ -1186,6 +1189,58 @@ class StockScreener:
             return int(base_limit * 0.6)  # 减少40%
         else:  # 下降
             return int(base_limit * 0.3)  # 减少70%
+
+    def _auto_add_to_observation_pool(self, scored: List[Dict[str, Any]]):
+        """
+        【v9.0新增】自动将左侧强信号股票加入观察池
+
+        规则：
+        - 左侧维度评分 >= 60 分（强左侧信号）
+        - 总分 >= 55 分（避免垃圾股）
+        - 自动入池，等待次日 T+1~T+3 右侧确认
+
+        Args:
+            scored: 已评分的股票列表
+        """
+        try:
+            from observation_tracker import get_observation_tracker
+            from datetime import datetime
+
+            tracker = get_observation_tracker()
+            today = datetime.now().strftime("%Y-%m-%d")
+
+            added_count = 0
+            for stock in scored:
+                # 检查左侧维度评分
+                left_score = stock.get("左侧", 0)
+                total_score = stock.get("总分", 0)
+
+                # 左侧强信号 + 总分达标
+                if left_score >= 60 and total_score >= 55:
+                    code = stock.get("代码", "")
+                    name = stock.get("名称", "")
+                    price = stock.get("最新价", 0)
+                    signal = f"左侧{left_score}分 | {stock.get('信号', '')}"
+
+                    # 尝试加入观察池
+                    success = tracker.add(
+                        stock_code=code,
+                        stock_name=name,
+                        entry_signal=signal,
+                        entry_price=price,
+                        entry_score=total_score,
+                        entry_date=today
+                    )
+
+                    if success:
+                        added_count += 1
+                        logger.info(f"✅ {code} {name} 自动入观察池（左侧{left_score}分）")
+
+            if added_count > 0:
+                logger.info(f"本次筛选共 {added_count} 只股票自动入观察池")
+
+        except Exception as e:
+            logger.warning(f"自动入观察池失败: {e}")
 
 
 # 单例
