@@ -193,6 +193,32 @@ class StockScreener:
         except Exception as e:
             logger.debug(f"新闻预取失败: {e}")
 
+        # 【v9.0 Step 2】步骤3.5: 批量预取基本面/资金面/催化剂数据
+        fundamental_cache = {}
+        moneyflow_cache = {}
+        catalyst_cache = {}
+        targets = quick_filtered[:100]
+        if targets:
+            print(f"\n步骤3.5: 批量预取基本面/资金面/催化剂数据（{len(targets)} 只）")
+            for code in targets:
+                try:
+                    fundamental_cache[code] = self.fetcher.get_financial_indicators(code)
+                except Exception as e:
+                    logger.debug(f"基本面预取失败 {code}: {e}")
+                try:
+                    moneyflow_cache[code] = self.fetcher.get_moneyflow(code, days=5)
+                except Exception as e:
+                    logger.debug(f"资金面预取失败 {code}: {e}")
+                try:
+                    catalyst_cache[code] = self.fetcher.get_catalysts(code)
+                except Exception as e:
+                    logger.debug(f"催化剂预取失败 {code}: {e}")
+            logger.info(
+                f"v9.0 Step 2 预取: 基本面 {sum(1 for v in fundamental_cache.values() if v)} 只 / "
+                f"资金面 {sum(1 for v in moneyflow_cache.values() if v)} 只 / "
+                f"催化剂 {sum(1 for v in catalyst_cache.values() if v)} 只"
+            )
+
         # 步骤4: 获取历史数据 + 实时评分
         scored = []
         for code in quick_filtered[:100]:  # 限制处理数量
@@ -208,8 +234,16 @@ class StockScreener:
 
                 # 将预取新闻数据注入 realtime_data（供 warfare 使用）
                 eval_data = dict(realtime_data)
+                eval_data['code'] = code
                 if code in news_cache:
                     eval_data['_news_sentiment'] = news_cache[code]
+                # 【v9.0 Step 2】注入基本面/资金面/催化剂数据
+                if code in fundamental_cache:
+                    eval_data['_fundamentals'] = fundamental_cache[code]
+                if code in moneyflow_cache:
+                    eval_data['_moneyflow'] = moneyflow_cache[code]
+                if code in catalyst_cache:
+                    eval_data['_catalysts'] = catalyst_cache[code]
 
                 # 调用实时评估（纯左侧战法 v8.0）
                 warfare = get_warfare()

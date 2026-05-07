@@ -124,7 +124,16 @@ class ComprehensiveWarfare:
             # 9. 情绪评估 - 涨停基因（保留，与热点消息有重叠但独立）
             result["情绪"] = self._evaluate_sentiment_left(df)
 
-            # 10. 综合评分（v8.0权重：量在价先15%，热点消息15%）
+            # 【v9.0 Step 2 新增】10. 基本面评估
+            result["基本面"] = self._evaluate_fundamentals_left(info)
+
+            # 【v9.0 Step 2 新增】11. 资金面评估
+            result["资金面"] = self._evaluate_moneyflow_left(info)
+
+            # 【v9.0 Step 2 新增】12. 催化剂评估
+            result["催化剂"] = self._evaluate_catalysts_left(info)
+
+            # 13. 综合评分（v9.0 Step 2 权重：基本面10% + 资金面8% + 催化剂7%）
             result["综合"] = self._calculate_composite_score_left(result)
 
             # 11. 左侧启动信号识别
@@ -1692,6 +1701,239 @@ class ComprehensiveWarfare:
 
         return {"评分": score, "详情": details}
 
+    # ==================== 【v9.0 Step 2】基本面维度 ====================
+
+    def _evaluate_fundamentals_left(self, info: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        基本面维度评分 - 小金库 9.0 Step 2
+
+        数据来自 info['_fundamentals']（screener.py 预取注入）
+        字段：pe, roe, net_profit_growth, debt_ratio
+
+        评分规则（基础分50）：
+        - PE: <30 +20 / 30-50 +10 / >50 -10
+        - ROE: >15% +20 / 8-15% +10 / <8% -10
+        - 净利润增长率: >20% +20 / 0-20% +10 / <0 -15
+        - 资产负债率: <50% +10 / >70% -10
+        """
+        details = {}
+        score = 50  # 基础分
+
+        # 数据缺失时返回中性评分
+        fundamentals = (info or {}).get('_fundamentals') or {}
+        if not fundamentals:
+            details["数据状态"] = "无基本面数据（中性评分）"
+            return {"评分": 50, "详情": details}
+
+        # ============ PE 评分 ============
+        pe = fundamentals.get('pe')
+        if pe is not None:
+            if pe < 0:
+                score -= 20  # 亏损
+                details["PE"] = f"{pe:.1f}（亏损）"
+            elif pe < 30:
+                score += 20
+                details["PE"] = f"{pe:.1f}（低估值）"
+            elif pe <= 50:
+                score += 10
+                details["PE"] = f"{pe:.1f}（合理）"
+            else:
+                score -= 10
+                details["PE"] = f"{pe:.1f}（高估值）"
+        else:
+            details["PE"] = "无数据"
+
+        # ============ ROE 评分 ============
+        roe = fundamentals.get('roe')
+        if roe is not None:
+            if roe > 15:
+                score += 20
+                details["ROE"] = f"{roe:.1f}%（优质）"
+            elif roe >= 8:
+                score += 10
+                details["ROE"] = f"{roe:.1f}%（合格）"
+            else:
+                score -= 10
+                details["ROE"] = f"{roe:.1f}%（较差）"
+        else:
+            details["ROE"] = "无数据"
+
+        # ============ 净利润增长率 评分 ============
+        growth = fundamentals.get('net_profit_growth')
+        if growth is not None:
+            if growth > 20:
+                score += 20
+                details["净利润增长率"] = f"{growth:.1f}%（高成长）"
+            elif growth >= 0:
+                score += 10
+                details["净利润增长率"] = f"{growth:.1f}%（正增长）"
+            else:
+                score -= 15
+                details["净利润增长率"] = f"{growth:.1f}%（业绩下滑）"
+        else:
+            details["净利润增长率"] = "无数据"
+
+        # ============ 资产负债率 评分 ============
+        debt = fundamentals.get('debt_ratio')
+        if debt is not None:
+            if debt < 50:
+                score += 10
+                details["资产负债率"] = f"{debt:.1f}%（安全）"
+            elif debt > 70:
+                score -= 10
+                details["资产负债率"] = f"{debt:.1f}%（高杠杆风险）"
+            else:
+                details["资产负债率"] = f"{debt:.1f}%（正常）"
+        else:
+            details["资产负债率"] = "无数据"
+
+        score = max(0, min(100, score))
+        details["评分"] = score
+        return {"评分": score, "详情": details}
+
+    # ==================== 【v9.0 Step 2】资金面维度 ====================
+
+    def _evaluate_moneyflow_left(self, info: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        资金面维度评分 - 小金库 9.0 Step 2
+
+        数据来自 info['_moneyflow']（screener.py 预取注入）
+        字段：main_net_inflow, super_net_inflow, hk_hold_change, margin_balance_change
+
+        评分规则（基础分50）：
+        - 主力净流入: >1000万 +25 / 0-1000万 +10 / <-1000万 -20
+        - 北向持股: >100万股 +20 / <-100万股 -15
+        - 融资余额变化: >10% +15 / <-10% -10
+        """
+        details = {}
+        score = 50
+
+        moneyflow = (info or {}).get('_moneyflow') or {}
+        if not moneyflow:
+            details["数据状态"] = "无资金面数据（中性评分）"
+            return {"评分": 50, "详情": details}
+
+        # ============ 主力资金净流入（万元） ============
+        main = moneyflow.get('main_net_inflow')
+        if main is not None:
+            if main > 1000:
+                score += 25
+                details["主力资金"] = f"+{main:.0f}万（强吸筹）"
+            elif main > 0:
+                score += 10
+                details["主力资金"] = f"+{main:.0f}万（温和流入）"
+            elif main < -1000:
+                score -= 20
+                details["主力资金"] = f"{main:.0f}万（出货）"
+            else:
+                score -= 5
+                details["主力资金"] = f"{main:.0f}万（小幅流出）"
+        else:
+            details["主力资金"] = "无数据"
+
+        # ============ 北向资金持股变化（万股） ============
+        hk = moneyflow.get('hk_hold_change')
+        if hk is not None:
+            if hk > 100:
+                score += 20
+                details["北向资金"] = f"+{hk:.0f}万股（外资增持）"
+            elif hk < -100:
+                score -= 15
+                details["北向资金"] = f"{hk:.0f}万股（外资撤离）"
+            else:
+                details["北向资金"] = f"{hk:.0f}万股（持平）"
+        else:
+            details["北向资金"] = "无数据"
+
+        # ============ 融资余额变化（万元） ============
+        margin = moneyflow.get('margin_balance_change')
+        if margin is not None:
+            # 这里 margin 已是 N 日累计绝对值变化（万元），用相对量来判断意义不大
+            # 简化：>0 加分（融资买入意愿增强）；<0 略扣分
+            if margin > 1000:
+                score += 15
+                details["融资余额"] = f"+{margin:.0f}万（融资买入）"
+            elif margin < -1000:
+                score -= 10
+                details["融资余额"] = f"{margin:.0f}万（融资撤退）"
+            else:
+                details["融资余额"] = f"{margin:.0f}万（变化不大）"
+        else:
+            details["融资余额"] = "无数据"
+
+        score = max(0, min(100, score))
+        details["评分"] = score
+        return {"评分": score, "详情": details}
+
+    # ==================== 【v9.0 Step 2】催化剂维度 ====================
+
+    def _evaluate_catalysts_left(self, info: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        催化剂维度评分 - 小金库 9.0 Step 2
+
+        数据来自 info['_catalysts']（screener.py 预取注入）
+        字段：has_forecast, forecast_type, forecast_growth, has_survey, survey_count, has_policy
+
+        评分规则（基础分50）：
+        - 业绩预增/扭亏: +30
+        - 业绩略增/续盈: +15
+        - 业绩预减/首亏: -25
+        - 机构调研 >5家: +20 / 1-5家: +10
+        - 政策利好: +15
+        """
+        details = {}
+        score = 50
+
+        catalysts = (info or {}).get('_catalysts') or {}
+        if not catalysts:
+            details["数据状态"] = "无催化剂数据（中性评分）"
+            return {"评分": 50, "详情": details}
+
+        # ============ 业绩预告 ============
+        if catalysts.get('has_forecast'):
+            ftype = catalysts.get('forecast_type', '')
+            growth = catalysts.get('forecast_growth')
+
+            if ftype in ('预增', '扭亏'):
+                score += 30
+                details["业绩预告"] = f"{ftype}" + (f"（增长{growth:.0f}%）" if growth else "")
+            elif ftype in ('略增', '续盈'):
+                score += 15
+                details["业绩预告"] = f"{ftype}"
+            elif ftype in ('预减', '首亏'):
+                score -= 25
+                details["业绩预告"] = f"{ftype}（利空）"
+            elif ftype in ('略减', '续亏'):
+                score -= 10
+                details["业绩预告"] = f"{ftype}"
+            else:
+                details["业绩预告"] = f"{ftype or '有预告'}"
+        else:
+            details["业绩预告"] = "无"
+
+        # ============ 机构调研 ============
+        if catalysts.get('has_survey'):
+            count = catalysts.get('survey_count', 0)
+            if count > 5:
+                score += 20
+                details["机构调研"] = f"{count}家（关注度高）"
+            elif count >= 1:
+                score += 10
+                details["机构调研"] = f"{count}家（有关注）"
+        else:
+            details["机构调研"] = "无"
+
+        # ============ 政策利好 ============
+        if catalysts.get('has_policy'):
+            score += 15
+            details["政策利好"] = "有"
+        else:
+            details["政策利好"] = "无"
+
+        score = max(0, min(100, score))
+        details["评分"] = score
+        return {"评分": score, "详情": details}
+
     # ==================== 左侧战法：量价维度 ====================
 
     def _evaluate_volume_price_left(self, df: pd.DataFrame) -> Dict[str, Any]:
@@ -2153,41 +2395,44 @@ class ComprehensiveWarfare:
     # ==================== 综合评分计算（左侧） ====================
 
     def _calculate_composite_score_left(self, result: Dict[str, Any]) -> Dict[str, Any]:
-        """计算综合评分 - 左侧战法 v8.3 权重（简化版）
+        """计算综合评分 - 左侧战法 v9.0 Step 2 权重（8维度）
 
-        【v8.3整改】从9维度简化到5维度，删除数据不稳定和权重不清的维度：
-        - 删除"量在价先"：量能数据不稳定，权重不清
-        - 删除"热点消息"：消息面依赖外部API，数据不稳定
-        - 删除"情绪"（降为辅助）：涨停基因权重过高，已合并到量价
-        - 删除"位置"（合并到左侧）：BOLL下轨已在左侧维度评估
+        【v9.0 Step 2整改】在 Step 1 的 5 维度基础上新增 3 个维度：
+        - 基本面（10%）：PE/ROE/净利润增长率/资产负债率
+        - 资金面（8%）：主力净流入/北向持股/融资余额
+        - 催化剂（7%）：业绩预告/机构调研/政策利好
 
-        保留5个核心维度：
-        1. 趋势(15%) - 均线蓄势/收敛
+        8 维度权重（合计 100%）：
+        1. 趋势(18%) - 均线蓄势/收敛
         2. 动量(20%) - MACD即将转多/KDJ
-        3. 左侧(25%) - 超跌反弹核心（含BOLL/BIAS）
-        4. 量价(20%) - 地量见底/底部放量
-        5. 形态(20%) - 锤子线/早晨之星
+        3. 左侧(14%) - 超跌反弹核心（含BOLL/BIAS）
+        4. 量价(15%) - 地量见底/底部放量
+        5. 形态(8%)  - 锤子线/早晨之星
+        6. 基本面(10%) - PE/ROE/净利润增长率/资产负债率
+        7. 资金面(8%)  - 主力净流入/北向持股/融资余额
+        8. 催化剂(7%)  - 业绩预告/机构调研/政策利好
         """
-        # 【v8.3整改】简化权重，强调动量和趋势
-        # 左侧战法的核心问题：只给超跌加分，不考虑"超跌后何时涨"
-        # 整改思路：动量>左侧，因为"已经启动的股票"比"超跌但没涨的股票"胜率更高
-        # 【v9.0整改】删除滞后指标后，动量维度权重下调，趋势/量价/左侧上调
+        # 【v9.0 Step 2】8维度权重，合计100%
         weights = {
-            "趋势": 0.22,     # 【提升】趋势为王：均线多头+站上MA5
-            "动量": 0.25,     # 【下调】动量领先：删除死叉扣分后权重下调
-            "左侧": 0.16,     # 【提升】超跌反弹：只做有右侧确认的超跌
-            "量价": 0.22,     # 【提升】量在价先：底部放量+量能健康
-            "形态": 0.15,     # 【保持】形态次要：锤子线/早晨之星
+            "趋势": 0.18,     # 趋势：均线蓄势/收敛
+            "动量": 0.20,     # 动量：MACD即将转多
+            "左侧": 0.14,     # 左侧：超跌反弹核心
+            "量价": 0.15,     # 量价：地量见底/底部放量
+            "形态": 0.08,     # 形态：锤子线/早晨之星
+            "基本面": 0.10,   # 【v9.0 Step 2 新增】基本面
+            "资金面": 0.08,   # 【v9.0 Step 2 新增】资金面
+            "催化剂": 0.07,   # 【v9.0 Step 2 新增】催化剂
         }
 
-        # 【v8.3整改】只计算5个核心维度（删除不稳定维度）
+        # 【v9.0 Step 2】计算8个维度的加权综合评分
         total_score = 0
-        for dim in weights.keys():  # 只遍历5个核心维度
+        for dim in weights.keys():
             if dim in result:
                 dim_score = result[dim].get("评分", 50)
                 total_score += dim_score * weights[dim]
 
-        # 加上右侧确认加成（v8.3保留）
+        # 右侧确认加成（保留接口，当前未启用，留给 Step 3 接入观察池晋级时使用）
+        right_confirm_bonus = 0
         total_score += right_confirm_bonus
 
         composite = round(total_score, 1)
@@ -2203,7 +2448,7 @@ class ComprehensiveWarfare:
         if boll_pos > 85:
             composite -= 10
 
-        composite = round(composite, 1)  # 修正：使用已扣分的composite
+        composite = round(composite, 1)
 
         # 左侧评级
         if composite >= 80:

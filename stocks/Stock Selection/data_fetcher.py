@@ -617,6 +617,298 @@ class DataFetcher:
             pass
         return []
 
+    def get_financial_indicators(self, symbol: str, use_cache: bool = True) -> Dict[str, Any]:
+        """
+        获取财务指标（基本面）- 小金库 9.0 Step 2
+
+        Args:
+            symbol: 股票代码，如 '600519'
+            use_cache: 是否使用缓存
+
+        Returns:
+            归一化后的财务指标字典:
+            - pe: 市盈率（TTM）
+            - roe: 净资产收益率（%）
+            - net_profit_growth: 净利润增长率（同比，%）
+            - debt_ratio: 资产负债率（%）
+            - update_date: 数据更新日期
+
+        降级策略: Tushare → AKShare → 空字典
+        """
+        cache_key = f"financial_{symbol}"
+
+        # 尝试从缓存获取（7天有效期）
+        if use_cache:
+            cached = self.cache.get(cache_key, max_age_minutes=60 * 24 * 7)
+            if cached is not None:
+                return cached
+
+        # 尝试 Tushare
+        if self.fetchers.get("tushare") and self.fetchers["tushare"].is_available():
+            try:
+                ts_code = self._to_tushare_code(symbol)
+                df = self.fetchers["tushare"].get_fina_indicator(ts_code)
+
+                if df is not None and not df.empty:
+                    # 取最新一期数据
+                    latest = df.iloc[0]
+                    result = self._normalize_financial_dict({
+                        'pe_ttm': latest.get('pe_ttm'),
+                        'roe': latest.get('roe'),
+                        'netprofit_yoy': latest.get('netprofit_yoy'),
+                        'debt_to_assets': latest.get('debt_to_assets'),
+                        'end_date': latest.get('end_date')
+                    }, 'tushare')
+
+                    self.cache.set(cache_key, result)
+                    self.current_source = 'tushare'
+                    return result
+            except Exception as e:
+                logger.debug(f"Tushare财务指标获取失败 {symbol}: {e}")
+
+        # 降级到 AKShare
+        if self.fetchers.get("akshare") and self.fetchers["akshare"].is_available():
+            try:
+                import akshare as ak
+                # AKShare 财务分析指标
+                df = ak.stock_financial_analysis_indicator(symbol=symbol)
+
+                if df is not None and not df.empty:
+                    latest = df.iloc[-1]  # AKShare 最新在最后
+                    result = self._normalize_financial_dict({
+                        '市盈率': latest.get('市盈率'),
+                        '净资产收益率': latest.get('净资产收益率'),
+                        '净利润同比增长率': latest.get('净利润同比增长率'),
+                        '资产负债率': latest.get('资产负债率'),
+                        '日期': latest.get('日期')
+                    }, 'akshare')
+
+                    self.cache.set(cache_key, result)
+                    self.current_source = 'akshare'
+                    return result
+            except Exception as e:
+                logger.debug(f"AKShare财务指标获取失败 {symbol}: {e}")
+
+        # 所有数据源都失败，返回空字典
+        logger.warning(f"无法获取 {symbol} 的财务指标，跳过基本面维度")
+        return {}
+
+    def get_moneyflow(self, symbol: str, days: int = 5, use_cache: bool = True) -> Dict[str, Any]:
+        """
+        获取资金流向（近N日）- 小金库 9.0 Step 2
+
+        Args:
+            symbol: 股票代码，如 '600519'
+            days: 统计天数（默认近5日）
+            use_cache: 是否使用缓存
+
+        Returns:
+            归一化后的资金流向字典:
+            - main_net_inflow: 主力资金净流入（近N日累计，单位：万元）
+            - super_net_inflow: 超大单净流入（万元）
+            - hk_hold_change: 北向资金持股变化（近N日，万股，可能为None）
+            - margin_balance_change: 融资余额变化（近N日，万元，可能为None）
+
+        降级策略: Tushare → AKShare → 空字典
+        缓存：1天
+        """
+        cache_key = f"moneyflow_{symbol}_{days}"
+
+        if use_cache:
+            cached = self.cache.get(cache_key, max_age_minutes=60 * 24)
+            if cached is not None:
+                return cached
+
+        # 尝试 Tushare
+        if self.fetchers.get("tushare") and self.fetchers["tushare"].is_available():
+            try:
+                import tushare as ts
+                pro = ts.pro_api(self.fetchers["tushare"].token)
+                ts_code = self._to_tushare_code(symbol)
+                end_date = datetime.now().strftime("%Y%m%d")
+                start_date = (datetime.now() - timedelta(days=days * 2 + 5)).strftime("%Y%m%d")
+
+                # 主力资金流向
+                df_flow = pro.moneyflow(ts_code=ts_code, start_date=start_date, end_date=end_date)
+                main_inflow = None
+                super_inflow = None
+                if df_flow is not None and not df_flow.empty:
+                    df_flow = df_flow.head(days)
+                    main_inflow = float(df_flow['net_mf_amount'].sum()) if 'net_mf_amount' in df_flow.columns else None
+                    if 'buy_elg_amount' in df_flow.columns and 'sell_elg_amount' in df_flow.columns:
+                        super_inflow = float((df_flow['buy_elg_amount'] - df_flow['sell_elg_amount']).sum())
+
+                # 北向资金持股变化（高级接口，可能失败）
+                hk_change = None
+                try:
+                    df_hk = pro.hk_hold(ts_code=ts_code, start_date=start_date, end_date=end_date)
+                    if df_hk is not None and not df_hk.empty and len(df_hk) >= 2:
+                        hk_change = float(df_hk.iloc[0]['vol'] - df_hk.iloc[-1]['vol']) / 10000
+                except Exception:
+                    pass
+
+                # 融资余额变化（高级接口，可能失败）
+                margin_change = None
+                try:
+                    df_margin = pro.margin_detail(ts_code=ts_code, start_date=start_date, end_date=end_date)
+                    if df_margin is not None and not df_margin.empty and len(df_margin) >= 2:
+                        margin_change = float(df_margin.iloc[0]['rzye'] - df_margin.iloc[-1]['rzye']) / 10000
+                except Exception:
+                    pass
+
+                if main_inflow is not None:
+                    result = self._normalize_moneyflow_dict({
+                        'main_net_inflow': main_inflow,
+                        'super_net_inflow': super_inflow,
+                        'hk_hold_change': hk_change,
+                        'margin_balance_change': margin_change,
+                    }, 'tushare')
+                    self.cache.set(cache_key, result)
+                    self.current_source = 'tushare'
+                    return result
+            except Exception as e:
+                logger.debug(f"Tushare资金流向获取失败 {symbol}: {e}")
+
+        # 降级到 AKShare
+        if self.fetchers.get("akshare") and self.fetchers["akshare"].is_available():
+            try:
+                import akshare as ak
+                # AKShare 个股资金流向（近N日累计）
+                df = ak.stock_individual_fund_flow(stock=symbol, market="sh" if symbol.startswith("6") else "sz")
+
+                if df is not None and not df.empty:
+                    df = df.head(days)
+                    main_col = '主力净流入-净额' if '主力净流入-净额' in df.columns else '主力净流入'
+                    super_col = '超大单净流入-净额' if '超大单净流入-净额' in df.columns else '超大单净流入'
+
+                    main_inflow = float(df[main_col].sum()) / 10000 if main_col in df.columns else None
+                    super_inflow = float(df[super_col].sum()) / 10000 if super_col in df.columns else None
+
+                    result = self._normalize_moneyflow_dict({
+                        'main_net_inflow': main_inflow,
+                        'super_net_inflow': super_inflow,
+                        'hk_hold_change': None,
+                        'margin_balance_change': None,
+                    }, 'akshare')
+                    self.cache.set(cache_key, result)
+                    self.current_source = 'akshare'
+                    return result
+            except Exception as e:
+                logger.debug(f"AKShare资金流向获取失败 {symbol}: {e}")
+
+        logger.warning(f"无法获取 {symbol} 的资金流向，跳过资金面维度")
+        return {}
+
+    def get_catalysts(self, symbol: str, use_cache: bool = True) -> Dict[str, Any]:
+        """
+        获取催化剂信息 - 小金库 9.0 Step 2
+
+        Args:
+            symbol: 股票代码
+            use_cache: 是否使用缓存
+
+        Returns:
+            归一化后的催化剂字典:
+            - has_forecast: 是否有业绩预告（近3个月）
+            - forecast_type: 预告类型（预增/预减/扭亏/首亏/不变/略增/略减）
+            - forecast_growth: 预告净利润增长率中值（%，可能为None）
+            - has_survey: 是否有机构调研（近1个月）
+            - survey_count: 调研机构数量
+            - has_policy: 是否有政策利好（从新闻提取）
+
+        降级策略: Tushare → AKShare → NewsFetcher → 空字典
+        缓存：3天
+        """
+        cache_key = f"catalysts_{symbol}"
+
+        if use_cache:
+            cached = self.cache.get(cache_key, max_age_minutes=60 * 24 * 3)
+            if cached is not None:
+                return cached
+
+        result = {
+            'has_forecast': False,
+            'forecast_type': None,
+            'forecast_growth': None,
+            'has_survey': False,
+            'survey_count': 0,
+            'has_policy': False,
+        }
+
+        # 尝试 Tushare 获取业绩预告 + 机构调研
+        if self.fetchers.get("tushare") and self.fetchers["tushare"].is_available():
+            try:
+                import tushare as ts
+                pro = ts.pro_api(self.fetchers["tushare"].token)
+                ts_code = self._to_tushare_code(symbol)
+                end_date = datetime.now().strftime("%Y%m%d")
+                forecast_start = (datetime.now() - timedelta(days=90)).strftime("%Y%m%d")
+                survey_start = (datetime.now() - timedelta(days=30)).strftime("%Y%m%d")
+
+                # 业绩预告
+                try:
+                    df_fc = pro.forecast(ts_code=ts_code, start_date=forecast_start, end_date=end_date)
+                    if df_fc is not None and not df_fc.empty:
+                        latest = df_fc.iloc[0]
+                        result['has_forecast'] = True
+                        result['forecast_type'] = str(latest.get('type', '')) or None
+                        # 取增长率中值
+                        p_min = latest.get('p_change_min')
+                        p_max = latest.get('p_change_max')
+                        if p_min is not None and p_max is not None:
+                            result['forecast_growth'] = (float(p_min) + float(p_max)) / 2
+                except Exception as e:
+                    logger.debug(f"Tushare forecast获取失败 {symbol}: {e}")
+
+                # 机构调研
+                try:
+                    df_sv = pro.stk_surv(ts_code=ts_code, start_date=survey_start, end_date=end_date)
+                    if df_sv is not None and not df_sv.empty:
+                        result['has_survey'] = True
+                        result['survey_count'] = len(df_sv)
+                except Exception as e:
+                    logger.debug(f"Tushare stk_surv获取失败 {symbol}: {e}")
+
+            except Exception as e:
+                logger.debug(f"Tushare催化剂获取失败 {symbol}: {e}")
+
+        # 降级 AKShare 获取业绩预告
+        if not result['has_forecast'] and self.fetchers.get("akshare") and self.fetchers["akshare"].is_available():
+            try:
+                import akshare as ak
+                df = ak.stock_yjkb_em(date=datetime.now().strftime("%Y%m%d"))
+                if df is not None and not df.empty:
+                    matched = df[df['股票代码'].astype(str) == symbol] if '股票代码' in df.columns else df[df.iloc[:, 1].astype(str) == symbol]
+                    if not matched.empty:
+                        result['has_forecast'] = True
+                        if '预测类型' in matched.columns:
+                            result['forecast_type'] = str(matched.iloc[0]['预测类型'])
+                        elif '预告类型' in matched.columns:
+                            result['forecast_type'] = str(matched.iloc[0]['预告类型'])
+            except Exception as e:
+                logger.debug(f"AKShare业绩预告获取失败 {symbol}: {e}")
+
+        # 政策利好（通过 NewsFetcher 关键词匹配）
+        try:
+            news_fetcher = get_news_fetcher()
+            if news_fetcher.is_available():
+                df_news = news_fetcher.get_individual_news(symbol, limit=10)
+                if df_news is not None and not df_news.empty:
+                    policy_keywords = ['政策', '补贴', '扶持', '支持', '规划', '利好', '获批', '签约', '中标']
+                    text_col = '内容' if '内容' in df_news.columns else ('content' if 'content' in df_news.columns else None)
+                    if text_col:
+                        for _, row in df_news.iterrows():
+                            text = str(row[text_col])
+                            if any(kw in text for kw in policy_keywords):
+                                result['has_policy'] = True
+                                break
+        except Exception as e:
+            logger.debug(f"政策利好检查失败 {symbol}: {e}")
+
+        result = self._normalize_catalyst_dict(result, 'merged')
+        self.cache.set(cache_key, result)
+        return result
+
     def _to_tushare_code(self, symbol: str) -> str:
         """转换为tushare格式"""
         symbol = symbol.strip()
@@ -680,6 +972,85 @@ class DataFetcher:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
 
         return df
+
+    def _normalize_financial_dict(self, data: Dict[str, Any], source: str) -> Dict[str, Any]:
+        """
+        统一不同数据源的财务指标字段名 - 小金库 9.0 Step 2
+
+        Args:
+            data: 原始数据字典
+            source: 数据源名称 ('tushare' or 'akshare')
+
+        Returns:
+            归一化后的字典，统一字段名为: pe, roe, net_profit_growth, debt_ratio, update_date
+        """
+        result = {}
+
+        if source == 'tushare':
+            result['pe'] = float(data.get('pe_ttm', 0)) if data.get('pe_ttm') else None
+            result['roe'] = float(data.get('roe', 0)) if data.get('roe') else None
+            result['net_profit_growth'] = float(data.get('netprofit_yoy', 0)) if data.get('netprofit_yoy') else None
+            result['debt_ratio'] = float(data.get('debt_to_assets', 0)) if data.get('debt_to_assets') else None
+            result['update_date'] = data.get('end_date', '')
+
+        elif source == 'akshare':
+            # AKShare 字段可能是中文
+            pe_val = data.get('市盈率')
+            result['pe'] = float(pe_val) if pe_val and pe_val != '-' else None
+
+            roe_val = data.get('净资产收益率')
+            result['roe'] = float(roe_val) if roe_val and roe_val != '-' else None
+
+            growth_val = data.get('净利润同比增长率')
+            result['net_profit_growth'] = float(growth_val) if growth_val and growth_val != '-' else None
+
+            debt_val = data.get('资产负债率')
+            result['debt_ratio'] = float(debt_val) if debt_val and debt_val != '-' else None
+
+            result['update_date'] = str(data.get('日期', ''))
+
+        return result
+
+    def _normalize_moneyflow_dict(self, data: Dict[str, Any], source: str) -> Dict[str, Any]:
+        """
+        统一资金流向字段名 - 小金库 9.0 Step 2
+
+        统一字段：main_net_inflow, super_net_inflow, hk_hold_change, margin_balance_change
+        单位：万元 / 万股
+        """
+        return {
+            'main_net_inflow': float(data['main_net_inflow']) if data.get('main_net_inflow') is not None else None,
+            'super_net_inflow': float(data['super_net_inflow']) if data.get('super_net_inflow') is not None else None,
+            'hk_hold_change': float(data['hk_hold_change']) if data.get('hk_hold_change') is not None else None,
+            'margin_balance_change': float(data['margin_balance_change']) if data.get('margin_balance_change') is not None else None,
+        }
+
+    def _normalize_catalyst_dict(self, data: Dict[str, Any], source: str) -> Dict[str, Any]:
+        """
+        统一催化剂字段名 - 小金库 9.0 Step 2
+
+        统一字段：has_forecast, forecast_type, forecast_growth, has_survey, survey_count, has_policy
+        forecast_type 标准值：预增/预减/扭亏/首亏/略增/略减/不变/续亏/续盈
+        """
+        forecast_type = data.get('forecast_type')
+        if forecast_type:
+            # 把英文 type 映射为中文（Tushare 可能返回英文）
+            type_map = {
+                'increase': '预增', 'decrease': '预减',
+                'turnaround': '扭亏', 'firstloss': '首亏',
+                'slightincrease': '略增', 'slightdecrease': '略减',
+                'unchanged': '不变', 'continueloss': '续亏', 'continueprofit': '续盈',
+            }
+            forecast_type = type_map.get(str(forecast_type).lower(), forecast_type)
+
+        return {
+            'has_forecast': bool(data.get('has_forecast', False)),
+            'forecast_type': forecast_type,
+            'forecast_growth': float(data['forecast_growth']) if data.get('forecast_growth') is not None else None,
+            'has_survey': bool(data.get('has_survey', False)),
+            'survey_count': int(data.get('survey_count', 0)),
+            'has_policy': bool(data.get('has_policy', False)),
+        }
 
     def get_realtime_spot(self, code: str) -> Dict[str, Any]:
         """

@@ -119,18 +119,27 @@ Core principle: Buy at divergence, sell at consensus. Identify stocks before sig
 
 ### Five-Dimension Scoring System (v9.0 - Lagging Indicators Removed)
 
-| Dimension | Weight (v9.0) | Core Signals |
-|-----------|---------------|--------------|
-| 趋势 (Trend) | 22% | MA convergence/accumulation, downtrend收敛 → about to turn up |
-| 动量 (Momentum) | 25% | MACD green column shrinking, golden cross approaching (death cross removed) |
-| 左侧 (Left-Side) | 16% | RSI<30, BOLL lower rail<15%, negative deviation |
-| 量价 (Volume-Price) | 22% | Ground volume bottom, bottom volume expansion |
-| 形态 (Pattern) | 15% | Hammer line, morning star pattern |
+| Dimension | Weight (v9.0 Step 1) | Weight (v9.0 Step 2) | Core Signals |
+|-----------|----------------------|----------------------|--------------|
+| 趋势 (Trend) | 22% | **18%** | MA convergence/accumulation, downtrend收敛 → about to turn up |
+| 动量 (Momentum) | 25% | **20%** | MACD green column shrinking, golden cross approaching (death cross removed) |
+| 左侧 (Left-Side) | 16% | **14%** | RSI<30, BOLL lower rail<15%, negative deviation |
+| 量价 (Volume-Price) | 22% | **15%** | Ground volume bottom, bottom volume expansion |
+| 形态 (Pattern) | 15% | **8%** | Hammer line, morning star pattern |
+| **基本面 (Fundamentals)** | - | **10%** | PE<50 + ROE>8% + 净利润增长率>0% + 资产负债率<70% |
+| **资金面 (Money Flow)** | - | **8%** | 主力净流入 + 北向持股变化 + 融资余额变化 |
+| **催化剂 (Catalysts)** | - | **7%** | 业绩预告 + 机构调研 + 政策利好 |
 
-**v9.0 Changes:**
+**v9.0 Step 1 Changes:**
 - ❌ Removed lagging indicators: MACD death cross, green column duration, KDJ death cross
 - ✅ Weight rebalancing: Momentum 30%→25%, Trend/Volume-Price 20%→22%, Left-Side 15%→16%
 - ✅ Added observation pool for right-side confirmation
+
+**v9.0 Step 2 Changes:**
+- ✅ Added 3 new dimensions: Fundamentals (10%), Money Flow (8%), Catalysts (7%)
+- ✅ Data sources: Tushare → AKShare → skip (graceful degradation)
+- ✅ Cache strategy: Fundamentals 7 days, Money Flow 1 day, Catalysts 3 days
+- ✅ Batch prefetch in screener step 3.5 (avoids per-stock API calls during scoring)
 
 ### Left-Side Breakout Signals
 
