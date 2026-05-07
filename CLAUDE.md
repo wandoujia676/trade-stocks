@@ -33,8 +33,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 1. Tushare Pro (primary, requires token in config.py)
 2. AKShare (backup)
-3. Baostock (last resort)
+3. ~~Baostock (disabled in v9.0 due to network blocking issues)~~
 4. Sina/QQ realtime APIs (for intraday data)
+
+**Note (v9.0):** Baostock temporarily disabled. Its login process blocks on certain networks. Tushare + AKShare cover all data needs.
 
 ## Commands
 
@@ -101,6 +103,30 @@ python stocks/Stock Selection/auto_screener.py        # weekly (Wed 14:00)
 python stocks/Stock Selection/auto_candidate_pool.py # monthly (15th, 28th 14:00)
 ```
 
+### Backtest commands (小金库 9.0)
+```bash
+# Quick smoke test (5 stocks × 1 month × 1 config, ~5 min)
+python run_backtest_v90.py --quick --config baseline
+
+# Full backtest (50 stocks × 2 years × 4 configs, ~1-3 hours)
+python run_backtest_v90.py
+
+# Custom date range
+python run_backtest_v90.py --start 20240101 --end 20241231
+
+# Single config comparison
+python run_backtest_v90.py --config baseline  # v8.x baseline (5 dimensions)
+python run_backtest_v90.py --config dim       # Only new dimensions
+python run_backtest_v90.py --config obs       # Only observation pool
+python run_backtest_v90.py --config v90       # v9.0 full (8 dimensions + obs pool)
+```
+
+**Output:**
+- `View Results/9.0回测报告.txt` - Human-readable comparison report
+- `View Results/9.0回测.json` - Structured results with trade details
+
+**Note:** Fundamentals/MoneyFlow/Catalyst APIs only return latest data. Backtest uses latest data as historical approximation (lookahead bias). Results should be treated as upper-bound reference.
+
 ## Pure Left-Side Strategy (纯左侧战法) + Right-Side Confirmation (v9.0)
 
 Core principle: Buy at divergence, sell at consensus. Identify stocks before significant rallies, then wait for right-side confirmation before entering.
@@ -162,14 +188,16 @@ Stock qualifies as "left-side breakout" when ANY condition is met:
 ## Key Files
 
 - `stocks/Stock Selection/config.py` - Tushare token and data source config
-- `stocks/Stock Selection/data_fetcher.py` - Unified data fetching (Tushare/AKShare/Baostock) + NewsFetcher (消息面)
+- `stocks/Stock Selection/data_fetcher.py` - Unified data fetching (Tushare/AKShare) + NewsFetcher (消息面)
 - `stocks/Stock Selection/realtime_fetcher.py` - Real-time quotes (Sina/QQ APIs)
 - `stocks/Stock Selection/screener.py` - Pure left-side screening engine
-- `stocks/Stock Selection/warfare.py` - Left-side scoring (v9.0: lagging indicators removed)
+- `stocks/Stock Selection/warfare.py` - Left-side scoring (v9.0: 8 dimensions)
 - `stocks/Stock Selection/observation_tracker.py` - Observation pool tracker (v9.0 new)
 - `stocks/Stock Selection/selection_tracker.py` - Generates "出击" stock list
+- `stocks/Stock Selection/backtester.py` - Backtest engine with v9.0 switches (v9.0 new)
 - `stocks/Stock Verification/warfare_config.json` - Dynamic weights after feedback
 - `stocks/Stock Selection/View Results/` - Output directory for screener results
+- `run_backtest_v90.py` - v9.0 backtest comparison script (v9.0 new)
 
 ## Output Files
 
