@@ -21,12 +21,10 @@ TUSHARE_TOKEN = os.getenv("TUSHARE_TOKEN", "f44ca4afe1b57594c870c3f7048a0f0464e4
 TUSHARE_BASE_URL = "http://api.tushare.pro"
 
 # ==================== 数据源优先级 ====================
-# 0: Tushare (优先), 1: AKShare (备选), 2: Baostock (最后备选)
-# 【v9.0 Step 3b 修复】临时禁用 baostock：
-# 原因：baostock 登录在某些网络环境会卡在 socket.recv() 几十分钟，
-# 导致 Backtester 初始化阻塞。Tushare + AKShare 已能覆盖所有需求。
-# 如需重启 baostock，把 "baostock" 重新加进列表即可。
-DATA_SOURCE_PRIORITY = ["tushare", "akshare"]
+# 【v9.0 Step 3b 修复】AKShare 优先（无积分限制），Tushare 备用
+# 原因：Tushare 免费版历史日线需要 2000+ 积分，低积分账户拉不到 2 年前数据
+# AKShare 虽然有时不稳定，但免费无限制，适合回测场景
+DATA_SOURCE_PRIORITY = ["akshare", "tushare"]
 
 # ==================== 选股默认参数 ====================
 SCREENER_DEFAULTS = {
