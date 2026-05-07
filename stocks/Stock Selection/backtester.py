@@ -398,6 +398,10 @@ class Backtester:
                 "最大回撤": 0,
                 "总收益率": 0,
                 "平均持仓天数": 0,
+                "盈利交易数": 0,
+                "亏损交易数": 0,
+                "平均盈利": 0,
+                "平均亏损": 0,
             }
 
         profits = [t["profit_pct"] for t in self.trades]

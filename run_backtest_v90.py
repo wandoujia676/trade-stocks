@@ -168,7 +168,12 @@ def main():
         stock_pool = STOCK_POOL_50[:5]
         start_date = "20260101"
         end_date = "20260201"
-        configs_to_run = [CONFIGS[3]]  # 只跑 v9.0 完整版
+        # quick 模式默认跑 v9.0 完整版，但允许 --config 覆盖
+        if args.config == "all":
+            configs_to_run = [CONFIGS[3]]  # 只跑 v9.0 完整版
+        else:
+            idx_map = {"baseline": 0, "dim": 1, "obs": 2, "v90": 3}
+            configs_to_run = [CONFIGS[idx_map[args.config]]]
     else:
         stock_pool = STOCK_POOL_50
         start_date = args.start
