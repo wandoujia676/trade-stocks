@@ -361,11 +361,15 @@ class DataFetcher:
 
     def __init__(self):
         self.cache = DataCache()
-        self.fetchers = {
-            "tushare": TushareFetcher(),
-            "akshare": AKShareFetcher(),
-            "baostock": BaostockFetcher(),
-        }
+        # 【v9.0 Step 3b 修复】按需初始化数据源，避免不在优先级列表里的源（如 baostock）
+        # 在 __init__ 阶段就 login() 卡住网络
+        self.fetchers = {}
+        if "tushare" in DATA_SOURCE_PRIORITY:
+            self.fetchers["tushare"] = TushareFetcher()
+        if "akshare" in DATA_SOURCE_PRIORITY:
+            self.fetchers["akshare"] = AKShareFetcher()
+        if "baostock" in DATA_SOURCE_PRIORITY:
+            self.fetchers["baostock"] = BaostockFetcher()
         self.current_source = None
         self._detect_available_source()
 

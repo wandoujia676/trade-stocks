@@ -22,7 +22,11 @@ TUSHARE_BASE_URL = "http://api.tushare.pro"
 
 # ==================== 数据源优先级 ====================
 # 0: Tushare (优先), 1: AKShare (备选), 2: Baostock (最后备选)
-DATA_SOURCE_PRIORITY = ["tushare", "akshare", "baostock"]
+# 【v9.0 Step 3b 修复】临时禁用 baostock：
+# 原因：baostock 登录在某些网络环境会卡在 socket.recv() 几十分钟，
+# 导致 Backtester 初始化阻塞。Tushare + AKShare 已能覆盖所有需求。
+# 如需重启 baostock，把 "baostock" 重新加进列表即可。
+DATA_SOURCE_PRIORITY = ["tushare", "akshare"]
 
 # ==================== 选股默认参数 ====================
 SCREENER_DEFAULTS = {
