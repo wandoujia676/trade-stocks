@@ -300,8 +300,13 @@ class ObservationTracker:
                 result["confirmed"].append(stock)
                 logger.info(f"✅ {code} {stock['名称']} 右侧确认通过")
 
-                # TODO: 调用 selection_tracker 写入出击池（需要完整的股票数据）
-                # self._promote_to_attack(stock)
+                # 【v9.0 Step 3】调用 selection_tracker 写入出击池
+                promote_result = self._promote_to_attack(stock)
+                stock["晋级结果"] = promote_result
+                if promote_result["success"]:
+                    logger.info(f"   → 已晋级出击池（评分 {promote_result['score']}）")
+                else:
+                    logger.warning(f"   → 晋级失败: {promote_result['reason']}")
 
             elif check_date == confirm_window[-1]:
                 # 最后一天仍未确认 → 退池
@@ -359,6 +364,107 @@ class ObservationTracker:
 
         logger.warning(f"❌ {stock_code} 不在观察池中")
         return False
+
+    def _promote_to_attack(self, stock: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        把右侧确认通过的股票写入出击池 - 小金库 9.0 Step 3
+
+        流程：
+        1. 拉历史 K 线
+        2. 预取基本面/资金面/催化剂数据（复用 data_fetcher 缓存）
+        3. 重新跑 warfare.evaluate_realtime（mode='left'）含 8 维度评分
+        4. 整理为 selection_tracker 期望的字段
+        5. 调用 selection_tracker.add_weekly_watchlist([result])
+
+        Args:
+            stock: 观察池中的股票记录，包含 代码/名称/入池价 等字段
+
+        Returns:
+            {"success": bool, "reason": str, "score": float}
+        """
+        code = stock.get("代码", "")
+        name = stock.get("名称", "")
+
+        try:
+            # 1. 拉历史 K 线
+            fetcher = _get_fetcher()
+            df_history = fetcher.get_daily(code, use_cache=True)
+            if df_history is None or len(df_history) < 20:
+                return {"success": False, "reason": "历史数据不足", "score": 0}
+
+            # 2. 实时行情（盘中可用）+ 9.0 Step 2 三类数据
+            eval_data = {"code": code, "name": name}
+            try:
+                rt = fetcher.get_realtime(code)
+                if rt:
+                    eval_data.update(rt)
+            except Exception:
+                pass  # 盘后无实时数据，不阻断
+
+            try:
+                eval_data["_fundamentals"] = fetcher.get_financial_indicators(code)
+            except Exception:
+                pass
+            try:
+                eval_data["_moneyflow"] = fetcher.get_moneyflow(code, days=5)
+            except Exception:
+                pass
+            try:
+                eval_data["_catalysts"] = fetcher.get_catalysts(code)
+            except Exception:
+                pass
+
+            # 3. 跑 warfare 评分
+            from warfare import get_warfare
+            warfare = get_warfare()
+            result = warfare.evaluate_realtime(df_history, eval_data, mode="left")
+
+            if "error" in result:
+                return {"success": False, "reason": f"评分失败: {result.get('error')}", "score": 0}
+
+            composite = result.get("综合", {}).get("评分", 0)
+            signal = result.get("信号", {})
+            breakout = result.get("左侧信号", {}) or result.get("启动信号", {})
+
+            # 4. 整理为 selection_tracker 期望的字段（参考 screener.py:260-281 + 出击.txt 字段）
+            attack_stock = {
+                "代码": code,
+                "名称": name or eval_data.get("name", ""),
+                "评级": result.get("综合", {}).get("评级", "B"),
+                "信号": signal.get("操作", "左侧买入（右侧确认通过）"),
+                "总分": composite,
+                "趋势": result.get("趋势", {}).get("评分", 0),
+                "动量": result.get("动量", {}).get("评分", 0),
+                "左侧": result.get("左侧", {}).get("评分", 0),
+                "量价": result.get("量价", {}).get("评分", 0),
+                "形态": result.get("形态", {}).get("评分", 0),
+                "基本面": result.get("基本面", {}).get("评分", 0),
+                "资金面": result.get("资金面", {}).get("评分", 0),
+                "催化剂": result.get("催化剂", {}).get("评分", 0),
+                "最新价": eval_data.get("price", 0) or stock.get("入池价", 0),
+                "涨跌幅": eval_data.get("change_pct", 0),
+                "止损": signal.get("止损", "8%"),
+                "止盈": signal.get("止盈", "20%"),
+                "理由": signal.get("理由", [f"观察池晋级：{stock.get('入池信号', '')}"]),
+                "分级": signal.get("分级", "次攻"),
+                "仓位建议": signal.get("仓位建议", "正常仓位"),
+                "启动信号": breakout.get("启动信号", True),  # 已通过右侧确认
+                "启动强度": breakout.get("信号强度", "右侧确认"),
+                "明日买入条件": signal.get("明日买入条件", {}),
+                "晋级来源": "观察池",
+                "入池日期": stock.get("入池日期", ""),
+            }
+
+            # 5. 调用 selection_tracker
+            from selection_tracker import SelectionTracker
+            tracker = SelectionTracker()
+            tracker.add_weekly_watchlist([attack_stock])
+
+            return {"success": True, "reason": "已晋级出击池", "score": composite}
+
+        except Exception as e:
+            logger.error(f"晋级 {code} 失败: {e}")
+            return {"success": False, "reason": f"异常: {str(e)}", "score": 0}
 
     def expire_old(self, today: str = None) -> int:
         """

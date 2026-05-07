@@ -742,6 +742,12 @@ def cmd_observation(args):
         print(f"✅ 确认通过: {len(result['confirmed'])} 只")
         for stock in result['confirmed']:
             print(f"  {stock['代码']} {stock['名称']} - {stock['确认结果']['reason']}")
+            promote = stock.get("晋级结果")
+            if promote:
+                if promote.get("success"):
+                    print(f"     → ✅ 已晋级出击池（评分 {promote.get('score', 0)}）")
+                else:
+                    print(f"     → ⚠️  晋级失败: {promote.get('reason', '')}")
 
         print(f"\n❌ 退池: {len(result['rejected'])} 只")
         for stock in result['rejected']:
