@@ -454,7 +454,7 @@ class DataFetcher:
                         self.current_source = source_name
                         return df
 
-            except DataSourceError as e:
+            except (DataSourceError, Exception) as e:
                 errors.append(f"{source_name}: {e}")
                 continue
 
