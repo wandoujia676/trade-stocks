@@ -246,8 +246,9 @@ class Backtester:
             try:
                 # 获取历史数据（截止到选股日期）
                 # 【v9.0 修复】必须传 start_date，否则默认 start = now()-120天 > end_date 导致空数据
+                # 需要至少 60 个交易日，约 90 个自然日，保险起见拉 365 天
                 eval_end = date
-                eval_start = (datetime.strptime(date, "%Y%m%d") - timedelta(days=180)).strftime("%Y%m%d")
+                eval_start = (datetime.strptime(date, "%Y%m%d") - timedelta(days=365)).strftime("%Y%m%d")
                 df = self.fetcher.get_daily(code, start_date=eval_start, end_date=eval_end, use_cache=True)
                 if df is None or len(df) < 60:
                     continue

@@ -214,17 +214,9 @@ class AKShareFetcher:
 
         try:
             symbol = self._convert_code(symbol)
+            # 【v9.0 修复】period 固定为 daily，不要根据时间跨度自动切换周线/月线
+            # 原逻辑会导致回测时拉 365 天数据变成月线，只返回 12 行
             period = "daily"
-            if start_date and end_date:
-                start = datetime.strptime(start_date, "%Y%m%d")
-                end = datetime.strptime(end_date, "%Y%m%d")
-                days = (end - start).days
-                if days <= 100:
-                    period = "daily"
-                elif days <= 300:
-                    period = "weekly"
-                else:
-                    period = "monthly"
 
             df = self.api.stock_zh_a_hist(
                 symbol=symbol.split(".")[0],
