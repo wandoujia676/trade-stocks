@@ -97,7 +97,11 @@ class Backtester:
 
         # 按月遍历
         current_dt = start_dt
+        month_idx = 0
+        total_months = ((end_dt - start_dt).days // 30) + 1
         while current_dt < end_dt:
+            month_idx += 1
+            print(f"  [{month_idx}/{total_months}] 处理 {current_dt.strftime('%Y-%m-%d')}...", flush=True)
             # 模拟"每月15日选股"或"每周三选股"
             month_end = current_dt + timedelta(days=30)
             if month_end > end_dt:
@@ -110,10 +114,13 @@ class Backtester:
                 limit=5,
                 use_v90_dimensions=use_v90_dimensions
             )
+            print(f"    选股: {len(selected)} 只", flush=True)
 
             # 【v9.0 Step 3b】观察池右侧确认（如果开启）
             if use_observation_pool and selected:
+                before_count = len(selected)
                 selected = self._apply_right_side_confirmation(selected, current_dt)
+                print(f"    右侧确认: {before_count} -> {len(selected)} 只", flush=True)
 
             if selected:
                 # 模拟次日买入

@@ -23,11 +23,18 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
+# 强制 stdout 行缓冲（确保进度日志实时刷新）
+sys.stdout.reconfigure(line_buffering=True) if hasattr(sys.stdout, 'reconfigure') else None
+
 sys.path.insert(0, 'stocks/Stock Selection')
 
 from backtester import Backtester
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    stream=sys.stdout,
+)
 logger = logging.getLogger(__name__)
 
 
@@ -69,9 +76,10 @@ CONFIGS = [
 
 def run_one_config(config, start_date, end_date, stock_pool, init_capital=1_000_000):
     """跑单个配置组合"""
-    print(f"\n{'='*70}")
-    print(f"配置: {config['name']} | dim={config['use_v90_dimensions']} obs={config['use_observation_pool']}")
-    print(f"{'='*70}")
+    print(f"\n{'='*70}", flush=True)
+    print(f"配置: {config['name']} | dim={config['use_v90_dimensions']} obs={config['use_observation_pool']}", flush=True)
+    print(f"{'='*70}", flush=True)
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 开始拉数据 + 评分 + 模拟交易...", flush=True)
 
     bt = Backtester(initial_capital=init_capital)
     stats = bt.run(
@@ -85,6 +93,7 @@ def run_one_config(config, start_date, end_date, stock_pool, init_capital=1_000_
         use_v90_dimensions=config["use_v90_dimensions"],
         use_observation_pool=config["use_observation_pool"],
     )
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 配置完成", flush=True)
     bt.print_report(stats)
     return stats, bt.trades
 
