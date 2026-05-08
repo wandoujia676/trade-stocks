@@ -214,13 +214,15 @@ def main():
     if args.quick:
         report_path = output_dir / "9.0回测报告_quick.txt"
         json_path = output_dir / "9.0回测_quick.json"
-    elif len(configs_to_run) == 4:
-        report_path = output_dir / "9.0回测报告.txt"
+    else:
+        # 单配置或完整对比都保存到同一个文件
         json_path = output_dir / "9.0回测.json"
-        report = render_comparison_report(all_results, start_date, end_date, stock_pool)
-        print()
-        print(report)
-        report_path.write_text(report, encoding="utf-8")
+        if len(configs_to_run) == 4:
+            report_path = output_dir / "9.0回测报告.txt"
+            report = render_comparison_report(all_results, start_date, end_date, stock_pool)
+            print()
+            print(report)
+            report_path.write_text(report, encoding="utf-8")
 
     # JSON 备份
     json_data = {
@@ -235,7 +237,8 @@ def main():
         ],
         "交易明细": all_trades,
     }
-    json_path.write_text(json.dumps(json_data, ensure_ascii=False, indent=2), encoding="utf-8")
+    with open(str(json_path), 'w', encoding='utf-8') as f:
+        json.dump(json_data, f, ensure_ascii=False, indent=2)
 
     print(f"\n[OK] Reports saved:")
     if not args.quick and len(configs_to_run) == 4:

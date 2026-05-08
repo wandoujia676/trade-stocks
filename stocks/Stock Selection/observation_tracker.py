@@ -212,8 +212,8 @@ class ObservationTracker:
             is_bullish = close_price > open_price
             body_pct = (close_price - open_price) / open_price * 100 if open_price > 0 else 0
 
-            # 右侧确认规则：实体阳（收盘>开盘）+ 量比>1.5
-            confirmed = is_bullish and vol_ratio > 1.5
+            # 右侧确认规则：实体阳（收盘>开盘）+ 量比>1.2
+            confirmed = is_bullish and vol_ratio > 1.2
 
             details = {
                 "开盘价": round(open_price, 2),
@@ -223,7 +223,7 @@ class ObservationTracker:
                 "5日均量": int(vol_5avg),
                 "量比": round(vol_ratio, 2),
                 "是否收阳": is_bullish,
-                "量比达标": vol_ratio > 1.5
+                "量比达标": vol_ratio > 1.2
             }
 
             if confirmed:
@@ -231,7 +231,7 @@ class ObservationTracker:
             elif not is_bullish:
                 reason = f"❌ 未收阳线（实体{body_pct:.1f}%）"
             else:
-                reason = f"❌ 量比不足（{vol_ratio:.1f} < 1.5）"
+                reason = f"❌ 量比不足（{vol_ratio:.1f} < 1.2）"
 
             return {
                 "confirmed": confirmed,

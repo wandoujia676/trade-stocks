@@ -201,7 +201,7 @@ class Backtester:
                     is_bullish = close_p > open_p
                     vol_ratio = vol / vol_5avg
 
-                    if is_bullish and vol_ratio > 1.5:
+                    if is_bullish and vol_ratio > 1.2:
                         # 通过确认
                         stock['右侧确认'] = {
                             'confirmed_day': i + 1,  # T+i+1
