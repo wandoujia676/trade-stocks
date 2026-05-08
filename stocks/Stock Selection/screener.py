@@ -240,6 +240,14 @@ class StockScreener:
                 # 【v9.0 Step 2】注入基本面/资金面/催化剂数据
                 if code in fundamental_cache:
                     eval_data['_fundamentals'] = fundamental_cache[code]
+                    # PE 补充：stock_financial_abstract_ths 不含PE，从实时行情取
+                    if eval_data['_fundamentals'].get('pe') is None and realtime_data:
+                        pe_val = realtime_data.get('市盈率-动态')
+                        if pe_val is not None:
+                            try:
+                                eval_data['_fundamentals']['pe'] = float(pe_val)
+                            except (ValueError, TypeError):
+                                pass
                 if code in moneyflow_cache:
                     eval_data['_moneyflow'] = moneyflow_cache[code]
                 if code in catalyst_cache:

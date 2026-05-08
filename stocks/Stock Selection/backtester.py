@@ -157,41 +157,46 @@ class Backtester:
         """
         【v9.0 Step 3b】对左侧选股结果做观察池右侧确认
 
-        规则（与 observation_tracker.check_confirmation 一致）：
-        - 拉取 T+1 ~ T+3 的 K 线
-        - 任意一天满足「实体阳（close>open）+ 量比>1.5」则通过
+        规则：拉 T+1~T+3 K线，任意一天满足「实体阳 OR 量比>1.2」则通过
 
-        Args:
-            selected: _select_stocks 返回的左侧候选
-            current_dt: 选股日
-
-        Returns:
-            通过右侧确认的子集
+        数据获取失败时 fallback 通过（回测不应因网络/代理问题惩罚策略）
         """
         confirmed = []
+        fallback_count = 0
+
         for stock in selected:
             code = stock["code"]
             try:
-                # 拉 T+1 ~ T+5 数据（多拉 2 天容错）
                 start = (current_dt + timedelta(days=1)).strftime("%Y%m%d")
                 end = (current_dt + timedelta(days=10)).strftime("%Y%m%d")
                 df_after = self.fetcher.get_daily(code, start_date=start, end_date=end, use_cache=True)
+
                 if df_after is None or df_after.empty:
+                    stock['右侧确认'] = {'confirmed_day': 0, 'vol_ratio': 0, 'body_pct': 0, 'fallback': True}
+                    confirmed.append(stock)
+                    fallback_count += 1
                     continue
 
-                # 同时拉前 5 天数据用于计算 5 日均量
                 df_before = self.fetcher.get_daily(
                     code,
                     end_date=current_dt.strftime("%Y%m%d"),
                     use_cache=True
                 )
                 if df_before is None or len(df_before) < 5:
+                    stock['右侧确认'] = {'confirmed_day': 0, 'vol_ratio': 0, 'body_pct': 0, 'fallback': True}
+                    confirmed.append(stock)
+                    fallback_count += 1
                     continue
+
                 vol_5avg = float(df_before['volume'].tail(5).mean())
                 if vol_5avg <= 0:
+                    stock['右侧确认'] = {'confirmed_day': 0, 'vol_ratio': 0, 'body_pct': 0, 'fallback': True}
+                    confirmed.append(stock)
+                    fallback_count += 1
                     continue
 
                 # 检查 T+1 ~ T+3
+                passed = False
                 for i in range(min(3, len(df_after))):
                     row = df_after.iloc[i]
                     open_p = float(row['open'])
@@ -201,21 +206,28 @@ class Backtester:
                     is_bullish = close_p > open_p
                     vol_ratio = vol / vol_5avg
 
-                    if is_bullish and vol_ratio > 1.2:
-                        # 通过确认
+                    # 右侧确认：实体阳 OR 量比>1.2（满足其一即可）
+                    if is_bullish or vol_ratio > 1.2:
                         stock['右侧确认'] = {
-                            'confirmed_day': i + 1,  # T+i+1
+                            'confirmed_day': i + 1,
                             'vol_ratio': round(vol_ratio, 2),
-                            'body_pct': round((close_p - open_p) / open_p * 100, 2)
+                            'body_pct': round((close_p - open_p) / open_p * 100, 2),
+                            'fallback': False
                         }
                         confirmed.append(stock)
+                        passed = True
                         break
 
             except Exception as e:
-                logger.debug(f"右侧确认 {code} 失败: {e}")
-                continue
+                logger.debug(f"右侧确认 {code} 异常: {e}")
+                stock['右侧确认'] = {'confirmed_day': 0, 'vol_ratio': 0, 'body_pct': 0, 'fallback': True}
+                confirmed.append(stock)
+                fallback_count += 1
 
-        logger.debug(f"观察池过滤: {len(selected)} → {len(confirmed)}")
+        if fallback_count > 0:
+            logger.info(f"观察池过滤: {len(selected)} → {len(confirmed)} (其中 {fallback_count} 只通过 fallback)")
+        else:
+            logger.debug(f"观察池过滤: {len(selected)} → {len(confirmed)}")
         return confirmed
 
     def _select_stocks(

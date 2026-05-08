@@ -48,8 +48,8 @@ class DataCache:
                 ON data_cache(updated_at)
             """)
 
-    def get(self, key: str, max_age_minutes: int = 60) -> Optional[pd.DataFrame]:
-        """获取缓存数据，如果过期返回None"""
+    def get(self, key: str, max_age_minutes: int = 60):
+        """获取缓存数据，如果过期返回None（支持 DataFrame 和 dict）"""
         import io
         with sqlite3.connect(self.db_path) as conn:
             row = conn.execute(
@@ -67,14 +67,20 @@ class DataCache:
             if age > max_age_minutes:
                 return None
 
+            if data_json.startswith('__dict__:'):
+                return json.loads(data_json[9:])
             return pd.read_json(io.StringIO(data_json))
 
-    def set(self, key: str, df: pd.DataFrame):
-        """设置缓存"""
+    def set(self, key: str, data):
+        """设置缓存（支持 DataFrame 和 dict）"""
+        if isinstance(data, dict):
+            serialized = '__dict__:' + json.dumps(data, ensure_ascii=False, default=str)
+        else:
+            serialized = data.to_json()
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO data_cache (key, data, updated_at) VALUES (?, ?, ?)",
-                (key, df.to_json(), datetime.now().isoformat())
+                (key, serialized, datetime.now().isoformat())
             )
 
     def clear_expired(self, max_age_minutes: int = 1440):
@@ -363,6 +369,10 @@ class DataFetcher:
         if "baostock" in DATA_SOURCE_PRIORITY:
             self.fetchers["baostock"] = BaostockFetcher()
         self.current_source = None
+        self._moneyflow_rank_cache = None
+        self._moneyflow_rank_cache_time = None
+        self._yjyg_cache = None
+        self._yjyg_cache_time = None
         self._detect_available_source()
 
     def _detect_available_source(self):
@@ -374,6 +384,53 @@ class DataFetcher:
                 logger.info(f"使用数据源: {source_name}")
                 return
         logger.warning("未检测到可用数据源，请安装tushare/akshare/baostock")
+
+    def _get_moneyflow_rank_cached(self) -> Optional[pd.DataFrame]:
+        """获取全市场资金流向排名（批量缓存，5分钟有效期）"""
+        now = datetime.now()
+        if (self._moneyflow_rank_cache is not None
+                and self._moneyflow_rank_cache_time is not None
+                and (now - self._moneyflow_rank_cache_time).total_seconds() < 300):
+            return self._moneyflow_rank_cache
+
+        try:
+            import akshare as ak
+            df = ak.stock_individual_fund_flow_rank(indicator='今日')
+            if df is not None and not df.empty:
+                self._moneyflow_rank_cache = df
+                self._moneyflow_rank_cache_time = now
+                return df
+        except Exception as e:
+            logger.debug(f"AKShare全市场资金流向获取失败: {e}")
+        return self._moneyflow_rank_cache
+
+    def _get_yjyg_cached(self) -> Optional[pd.DataFrame]:
+        """获取全市场业绩预告（批量缓存，1天有效期）"""
+        now = datetime.now()
+        if (self._yjyg_cache is not None
+                and self._yjyg_cache_time is not None
+                and (now - self._yjyg_cache_time).total_seconds() < 86400):
+            return self._yjyg_cache
+
+        try:
+            import akshare as ak
+            quarter_ends = ['0331', '0630', '0930', '1231']
+            latest_quarter = None
+            for qe in quarter_ends:
+                date_str = f"{now.year}{qe}"
+                if datetime.strptime(date_str, "%Y%m%d") <= now:
+                    latest_quarter = date_str
+            if latest_quarter is None:
+                latest_quarter = f"{now.year - 1}1231"
+
+            df = ak.stock_yjyg_em(date=latest_quarter)
+            if df is not None and not df.empty:
+                self._yjyg_cache = df
+                self._yjyg_cache_time = now
+                return df
+        except Exception as e:
+            logger.debug(f"AKShare业绩预告获取失败: {e}")
+        return self._yjyg_cache
 
     def get_daily(
         self,
@@ -666,17 +723,16 @@ class DataFetcher:
         if self.fetchers.get("akshare") and self.fetchers["akshare"].is_available():
             try:
                 import akshare as ak
-                # AKShare 财务分析指标
-                df = ak.stock_financial_analysis_indicator(symbol=symbol)
+                # 使用同花顺财务摘要（stock_financial_abstract_ths）
+                df = ak.stock_financial_abstract_ths(symbol=symbol)
 
                 if df is not None and not df.empty:
-                    latest = df.iloc[-1]  # AKShare 最新在最后
+                    latest = df.iloc[-1]  # 最新在最后一行
                     result = self._normalize_financial_dict({
-                        '市盈率': latest.get('市盈率'),
                         '净资产收益率': latest.get('净资产收益率'),
                         '净利润同比增长率': latest.get('净利润同比增长率'),
                         '资产负债率': latest.get('资产负债率'),
-                        '日期': latest.get('日期')
+                        '报告期': latest.get('报告期'),
                     }, 'akshare')
 
                     self.cache.set(cache_key, result)
@@ -765,30 +821,29 @@ class DataFetcher:
             except Exception as e:
                 logger.debug(f"Tushare资金流向获取失败 {symbol}: {e}")
 
-        # 降级到 AKShare
+        # 降级到 AKShare（使用全市场批量接口，按代码过滤）
         if self.fetchers.get("akshare") and self.fetchers["akshare"].is_available():
             try:
-                import akshare as ak
-                # AKShare 个股资金流向（近N日累计）
-                df = ak.stock_individual_fund_flow(stock=symbol, market="sh" if symbol.startswith("6") else "sz")
+                df_rank = self._get_moneyflow_rank_cached()
+                if df_rank is not None and not df_rank.empty:
+                    matched = df_rank[df_rank['代码'].astype(str) == symbol]
+                    if not matched.empty:
+                        row = matched.iloc[0]
+                        main_col = '今日主力净流入-净额'
+                        super_col = '今日超大单净流入-净额'
 
-                if df is not None and not df.empty:
-                    df = df.head(days)
-                    main_col = '主力净流入-净额' if '主力净流入-净额' in df.columns else '主力净流入'
-                    super_col = '超大单净流入-净额' if '超大单净流入-净额' in df.columns else '超大单净流入'
+                        main_inflow = float(row[main_col]) / 10000 if pd.notna(row.get(main_col)) else None
+                        super_inflow = float(row[super_col]) / 10000 if pd.notna(row.get(super_col)) else None
 
-                    main_inflow = float(df[main_col].sum()) / 10000 if main_col in df.columns else None
-                    super_inflow = float(df[super_col].sum()) / 10000 if super_col in df.columns else None
-
-                    result = self._normalize_moneyflow_dict({
-                        'main_net_inflow': main_inflow,
-                        'super_net_inflow': super_inflow,
-                        'hk_hold_change': None,
-                        'margin_balance_change': None,
-                    }, 'akshare')
-                    self.cache.set(cache_key, result)
-                    self.current_source = 'akshare'
-                    return result
+                        result = self._normalize_moneyflow_dict({
+                            'main_net_inflow': main_inflow,
+                            'super_net_inflow': super_inflow,
+                            'hk_hold_change': None,
+                            'margin_balance_change': None,
+                        }, 'akshare')
+                        self.cache.set(cache_key, result)
+                        self.current_source = 'akshare'
+                        return result
             except Exception as e:
                 logger.debug(f"AKShare资金流向获取失败 {symbol}: {e}")
 
@@ -868,19 +923,22 @@ class DataFetcher:
             except Exception as e:
                 logger.debug(f"Tushare催化剂获取失败 {symbol}: {e}")
 
-        # 降级 AKShare 获取业绩预告
+        # 降级 AKShare 获取业绩预告（使用 stock_yjyg_em 批量接口）
         if not result['has_forecast'] and self.fetchers.get("akshare") and self.fetchers["akshare"].is_available():
             try:
-                import akshare as ak
-                df = ak.stock_yjkb_em(date=datetime.now().strftime("%Y%m%d"))
-                if df is not None and not df.empty:
-                    matched = df[df['股票代码'].astype(str) == symbol] if '股票代码' in df.columns else df[df.iloc[:, 1].astype(str) == symbol]
+                df_yg = self._get_yjyg_cached()
+                if df_yg is not None and not df_yg.empty:
+                    matched = df_yg[df_yg['股票代码'].astype(str) == symbol]
                     if not matched.empty:
+                        row = matched.iloc[0]
                         result['has_forecast'] = True
-                        if '预测类型' in matched.columns:
-                            result['forecast_type'] = str(matched.iloc[0]['预测类型'])
-                        elif '预告类型' in matched.columns:
-                            result['forecast_type'] = str(matched.iloc[0]['预告类型'])
+                        result['forecast_type'] = str(row.get('预告类型', ''))
+                        growth = row.get('业绩变动幅度')
+                        if growth is not None and pd.notna(growth):
+                            try:
+                                result['forecast_growth'] = float(growth)
+                            except (ValueError, TypeError):
+                                pass
             except Exception as e:
                 logger.debug(f"AKShare业绩预告获取失败 {symbol}: {e}")
 
@@ -969,6 +1027,16 @@ class DataFetcher:
 
         return df
 
+    def _parse_pct_value(self, val) -> Optional[float]:
+        """解析可能带%/亿后缀的数值"""
+        if val is None or val is False or val == '-' or val == '':
+            return None
+        s = str(val).strip().replace('%', '').replace('亿', '')
+        try:
+            return float(s)
+        except (ValueError, TypeError):
+            return None
+
     def _normalize_financial_dict(self, data: Dict[str, Any], source: str) -> Dict[str, Any]:
         """
         统一不同数据源的财务指标字段名 - 小金库 9.0 Step 2
@@ -990,20 +1058,12 @@ class DataFetcher:
             result['update_date'] = data.get('end_date', '')
 
         elif source == 'akshare':
-            # AKShare 字段可能是中文
-            pe_val = data.get('市盈率')
-            result['pe'] = float(pe_val) if pe_val and pe_val != '-' else None
-
-            roe_val = data.get('净资产收益率')
-            result['roe'] = float(roe_val) if roe_val and roe_val != '-' else None
-
-            growth_val = data.get('净利润同比增长率')
-            result['net_profit_growth'] = float(growth_val) if growth_val and growth_val != '-' else None
-
-            debt_val = data.get('资产负债率')
-            result['debt_ratio'] = float(debt_val) if debt_val and debt_val != '-' else None
-
-            result['update_date'] = str(data.get('日期', ''))
+            # stock_financial_abstract_ths 返回带%后缀的字符串
+            result['pe'] = None  # 此数据源不含PE，由调用方补充
+            result['roe'] = self._parse_pct_value(data.get('净资产收益率'))
+            result['net_profit_growth'] = self._parse_pct_value(data.get('净利润同比增长率'))
+            result['debt_ratio'] = self._parse_pct_value(data.get('资产负债率'))
+            result['update_date'] = str(data.get('报告期', ''))
 
         return result
 
