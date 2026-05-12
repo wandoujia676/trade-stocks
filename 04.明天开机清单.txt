@@ -1,0 +1,120 @@
+明天开机清单（2026-05-13）
+=====================================
+
+【核心差异】今天数据层已修好，明天的验证重点从"修 bug"转向"看 bug 是否真好了"。
+
+-------------------------------------
+【第 0 步】先别急着跑选股，先备份代码
+-------------------------------------
+
+如果昨晚没让 Claude 帮你 commit 代码，今天开机第一件事：
+
+  跟 Claude 说："帮我把昨天的修复代码 commit 并推到 GitHub"
+
+涉及 6 个文件：
+  - stocks/Stock Selection/data_fetcher.py
+  - stocks/Stock Selection/screener.py
+  - stocks/Stock Selection/auto_screener.py
+  - stocks/Stock Selection/cli.py
+  - tools/check_tushare.py（新建）
+  - tools/（新建文件夹）
+
+-------------------------------------
+【第 1 步】重跑月度候选池（关键！）
+-------------------------------------
+
+  python "stocks/Stock Selection/auto_candidate_pool.py"
+
+预计 5~10 分钟。**看 log 里这两行**：
+
+  INFO - 左侧候选（潜伏）初步筛选: N 只
+  INFO - 左侧候选（潜伏）: M 只
+
+判断：
+  - N>0 且 M>0 → 左侧轨道工作正常，候选池修复，直接跑第 2 步
+  - N=0 → 左侧轨道数据不够
+    → 跟 Claude 说："left 还是 0，改 get_daily_batched 让它能 fallback 到 AKShare"
+
+然后看：
+  notepad "stocks\Stock Selection\View Results\monthly_candidate_pool.json"
+
+应该能看到 "筛选轨道": "left" 的条目，不再是全 right。
+
+-------------------------------------
+【第 2 步】跑周选
+-------------------------------------
+
+  python "stocks/Stock Selection/auto_screener.py"
+
+预计 2~5 分钟（今天首次跑会慢，因为要重建 stock_info_a_code_name 缓存；
+之后都是秒级命中）。
+
+看 log 里**不应该再有**这些：
+  - AKShare info失败（之前刷屏）
+  - 获取公告失败: '000066'
+  - Connection aborted 大量错误
+
+如果还出现，跟 Claude 说："log 里又出现 XXX 了"。
+
+-------------------------------------
+【第 3 步】查看出击报告
+-------------------------------------
+
+  notepad "stocks\Stock Selection\View Results\出击.报告.txt"
+
+关注"生成时间"是不是今天的日期。如果还是旧的 2026-04-24，说明今天也没选出股票。
+
+- 有股票 → 记在本子上，先熟悉逻辑，这周别买
+- 没股票 → 告诉 Claude 具体情况
+
+-------------------------------------
+【第 4 步】检查观察池
+-------------------------------------
+
+  python "stocks/Stock Selection/cli.py" observation check
+
+应该看到：
+  确认通过: X 只
+  退池: X 只
+  继续等待: X 只
+
+如果报 UnicodeEncodeError，说明你可能在 PowerShell 之外的环境跑，
+  先执行：set PYTHONIOENCODING=utf-8
+
+-------------------------------------
+【第 5 步】一键备份 View Results
+-------------------------------------
+
+双击项目根目录的 03.一键备份.bat
+
+**重要**：注意看窗口内容，不要让它一闪而过。如果看到报错：
+  - commit 失败（可能没东西要提交）
+  - push 失败（网络 or 认证问题）
+
+把报错内容告诉 Claude。
+
+注意：03.一键备份.bat 只备份 View Results 数据，不备份代码改动。
+代码改动要走【第 0 步】。
+
+=====================================
+【昨天修复的总结，供参考】
+=====================================
+
+1. cli.py 加 UTF-8 重配 → emoji 不再炸
+2. check_tushare.py 诊断脚本 → 确认 Tushare 积分不够 moneyflow/forecast
+3. AKShare 加 3 次 1s/2s/4s 重试 → daily 接口抗抖动
+4. 失败率熔断（>50% 抛 DataQualityError）→ 数据挂了大声报错
+5. auto_screener 捕获熔断异常 → 区分"没股票"和"数据挂了"
+6. NewsFetcher get_individual_news → get_stock_news bug 修了
+7. 公告接口列名容错 + log 降级 → 不再刷屏
+8. get_stock_info 改三级降级（批量 spot → code_name 缓存 → 单只兜底）
+   + 失败冷却 → 50 只 16 分钟 → 80s 首轮 + 后续 0s
+
+验证成果（昨天第二次跑 auto_screener）：
+  - AKShare info 失败: 0 条（之前 50+）
+  - 获取公告失败: 0 条（之前 8+）
+  - log 行数: 195（之前 1000+）
+  - 技术面通过: 49/50 ✅
+
+唯一没解决的："未筛选出符合条件的股票"——这不是数据问题，
+是候选池全是 right 轨道（left 出 0）。第 1 步解决。
