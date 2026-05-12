@@ -2,9 +2,18 @@
 命令行入口
 提供简单的命令行界面来执行选股、分析、监控操作
 """
+import sys
+
+if sys.platform == "win32":
+    # Windows 默认 GBK，emoji（✅ ❌ ⏳ ⚠️）会触发 UnicodeEncodeError
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except AttributeError:
+        pass
+
 import argparse
 import json
-import sys
 from pathlib import Path
 
 # 小金库版本

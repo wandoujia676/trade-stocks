@@ -11,7 +11,7 @@ import pandas as pd
 import numpy as np
 
 from config import SCREENER_DEFAULTS, SECTOR_MAP
-from data_fetcher import get_fetcher, get_news_fetcher
+from data_fetcher import get_fetcher, get_news_fetcher, DataQualityError
 from warfare import get_warfare
 
 logger = logging.getLogger(__name__)
@@ -597,16 +597,21 @@ class StockScreener:
         1. 放宽均线要求，不再硬性要求均线多头
         2. 降低成交量门槛
         3. 重点关注近期有涨幅的股票
+        【v9.1 加固】失败率统计 + 熔断：数据拉取失败率 >50% 直接抛 DataQualityError
         """
         passed = []
         ma_params = self.params
 
-        print(f"\n技术面筛选进度（{len(codes)}只）...")
+        total = len(codes)
+        fetch_failed = 0  # 数据拉取失败（区别于业务过滤淘汰）
+
+        print(f"\n技术面筛选进度（{total}只）...")
 
         for i, code in enumerate(codes):
             try:
                 df = self.fetcher.get_daily(code)
                 if df is None or len(df) < 30:
+                    fetch_failed += 1
                     continue
 
                 # 转换为方便计算的格式
@@ -725,8 +730,22 @@ class StockScreener:
                     print(f"  已处理 {i+1}/{len(codes)}，通过 {len(passed)} 只")
 
             except Exception as e:
+                fetch_failed += 1
                 logger.debug(f"技术面筛选 {code} 失败: {e}")
                 continue
+
+        # 【v9.1】失败率熔断：数据层大面积失败时，大声报错而不是静默返回空
+        failure_rate = fetch_failed / total if total > 0 else 0
+        if total >= 10 and failure_rate > 0.5:
+            raise DataQualityError(
+                f"技术面数据拉取失败率 {failure_rate:.0%}（{fetch_failed}/{total}），"
+                f"超过 50% 熔断阈值，疑似数据源大面积不可用"
+            )
+        if fetch_failed > 0:
+            logger.warning(
+                f"技术面数据拉取：{total - fetch_failed}/{total} 成功，"
+                f"{fetch_failed} 失败（失败率 {failure_rate:.0%}）"
+            )
 
         print(f"  技术面筛选完成：通过 {len(passed)} 只")
         return passed

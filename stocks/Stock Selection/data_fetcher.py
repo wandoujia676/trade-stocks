@@ -26,6 +26,53 @@ class DataSourceError(Exception):
     pass
 
 
+class DataQualityError(Exception):
+    """数据质量异常：失败率超阈值，不是真的没数据而是数据层大面积失败"""
+    pass
+
+
+def akshare_retry(func):
+    """AKShare 网络层重试：3 次，1s/2s/4s 指数退避。仅重试网络类异常。"""
+    import time as _time
+    import functools
+    from requests.exceptions import ConnectionError as _ReqConnErr, Timeout as _ReqTimeout
+    from http.client import RemoteDisconnected as _RemoteDisconnected
+    from urllib3.exceptions import ProtocolError as _ProtocolError
+
+    RETRY_EXC = (_ReqConnErr, _ReqTimeout, _RemoteDisconnected, _ProtocolError, OSError)
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        delays = [1, 2, 4]
+        last_exc = None
+        for i, delay in enumerate(delays):
+            try:
+                return func(*args, **kwargs)
+            except RETRY_EXC as e:
+                last_exc = e
+                if i < len(delays) - 1:
+                    logger.debug(
+                        f"AKShare 重试 {i+1}/{len(delays)} ({func.__name__}): "
+                        f"{type(e).__name__}，{delay}s 后再试"
+                    )
+                    _time.sleep(delay)
+            except DataSourceError as e:
+                # 看底层异常是不是网络类，是就重试
+                cause = e.__cause__ or e.__context__
+                if isinstance(cause, RETRY_EXC):
+                    last_exc = e
+                    if i < len(delays) - 1:
+                        logger.debug(
+                            f"AKShare 重试 {i+1}/{len(delays)} ({func.__name__}): "
+                            f"{type(cause).__name__}（被 DataSourceError 包装），{delay}s 后再试"
+                        )
+                        _time.sleep(delay)
+                        continue
+                raise
+        raise last_exc
+    return wrapper
+
+
 class DataCache:
     """SQLite本地缓存"""
 
@@ -192,9 +239,100 @@ class AKShareFetcher:
         except ImportError:
             logger.warning("AKShare未安装")
 
+        # 【v9.1】批量行情缓存，给 get_stock_info 用
+        # 避免 50 只股票 × 50 次 stock_individual_info_em 调用被东财限流
+        self._market_spot_cache: Optional[pd.DataFrame] = None
+        self._market_spot_cache_time: Optional[datetime] = None
+        self._market_spot_cache_ttl = 300  # 5 分钟
+        # 【v9.1】spot 失败冷却期：东财拒连后 5 分钟内不再尝试，避免 50 只股票重复白耗 20 分钟
+        self._market_spot_failed_at: Optional[datetime] = None
+        self._market_spot_cooldown = 300  # 5 分钟
+
+        # 【v9.1】代码+名称表缓存（非东财源，东财 spot 被拒时的兜底）
+        self._code_name_cache: Optional[pd.DataFrame] = None
+        self._code_name_cache_time: Optional[datetime] = None
+        self._code_name_cache_ttl = 86400  # 1 天（名称几乎不变）
+
     def is_available(self) -> bool:
         return self.api is not None
 
+    def _get_market_spot_cached(self) -> Optional[pd.DataFrame]:
+        """【v9.1】全市场实时行情批量缓存（5 分钟）
+
+        一次调用拿到 5000+ 只股票的代码/名称/总市值/流通市值/市盈率-动态/市净率 等，
+        替代按只调 stock_individual_info_em（那个东财反爬得死）。
+        东财今天反爬严重时，这个也可能失败，失败时进入 5 分钟冷却，不再尝试。
+        """
+        now = datetime.now()
+        if (self._market_spot_cache is not None
+                and self._market_spot_cache_time is not None
+                and (now - self._market_spot_cache_time).total_seconds() < self._market_spot_cache_ttl):
+            return self._market_spot_cache
+
+        # 【v9.1】失败冷却期内直接跳过，不要让 50 只股票各等 20s 重试
+        if (self._market_spot_failed_at is not None
+                and (now - self._market_spot_failed_at).total_seconds() < self._market_spot_cooldown):
+            return None
+
+        try:
+            df = self._ak_market_spot()
+            if df is not None and not df.empty:
+                # 代码列统一成字符串，便于查询
+                if '代码' in df.columns:
+                    df['代码'] = df['代码'].astype(str).str.zfill(6)
+                self._market_spot_cache = df
+                self._market_spot_cache_time = now
+                self._market_spot_failed_at = None
+                logger.info(f"【v9.1】全市场批量行情缓存刷新：{len(df)} 只")
+                return df
+        except Exception as e:
+            logger.debug(f"AKShare 全市场批量行情获取失败（东财 push2 被拒），进入 5 分钟冷却: {e}")
+            self._market_spot_failed_at = now
+        return self._market_spot_cache  # 返回旧缓存兜底（即使过期）
+
+    def _get_code_name_cached(self) -> Optional[pd.DataFrame]:
+        """【v9.1】A 股代码+名称表（stock_info_a_code_name，非东财源，1 天缓存）
+
+        东财 spot 被拒时的名称兜底。只能填 code/name，市值/PE 等字段缺失，
+        下游 screener 的 low_priority 分支会兜住。
+        """
+        now = datetime.now()
+        if (self._code_name_cache is not None
+                and self._code_name_cache_time is not None
+                and (now - self._code_name_cache_time).total_seconds() < self._code_name_cache_ttl):
+            return self._code_name_cache
+
+        try:
+            df = self._ak_code_name()
+            if df is not None and not df.empty:
+                # 标准化代码列（可能叫 code 或 symbol）
+                code_col = 'code' if 'code' in df.columns else ('symbol' if 'symbol' in df.columns else df.columns[0])
+                if code_col != 'code':
+                    df = df.rename(columns={code_col: 'code'})
+                df['code'] = df['code'].astype(str).str.zfill(6)
+                self._code_name_cache = df
+                self._code_name_cache_time = now
+                logger.info(f"【v9.1】A 股代码+名称表缓存刷新：{len(df)} 只（兜底）")
+                return df
+        except Exception as e:
+            logger.debug(f"AKShare 代码+名称表获取失败: {e}")
+        return self._code_name_cache
+
+    @staticmethod
+    @akshare_retry
+    def _ak_market_spot() -> Optional[pd.DataFrame]:
+        """AKShare 全市场实时行情（带网络重试）"""
+        import akshare as ak
+        return ak.stock_zh_a_spot_em()
+
+    @staticmethod
+    @akshare_retry
+    def _ak_code_name() -> Optional[pd.DataFrame]:
+        """AKShare 代码+名称表（带网络重试，非东财源）"""
+        import akshare as ak
+        return ak.stock_info_a_code_name()
+
+    @akshare_retry
     def get_realtime_data(self, symbol: str = "000001") -> pd.DataFrame:
         """获取实时行情（AKShare股票实时行情）"""
         if not self.is_available():
@@ -213,6 +351,7 @@ class AKShareFetcher:
             logger.error(f"AKShare realtime失败: {e}")
             raise DataSourceError(f"AKShare API错误: {e}")
 
+    @akshare_retry
     def get_daily(self, symbol: str, start_date: str = None, end_date: str = None) -> pd.DataFrame:
         """获取日线数据"""
         if not self.is_available():
@@ -236,19 +375,90 @@ class AKShareFetcher:
             logger.error(f"AKShare daily失败: {e}")
             raise DataSourceError(f"AKShare API错误: {e}")
 
+    @akshare_retry
     def get_stock_info(self, symbol: str) -> Dict[str, Any]:
-        """获取股票基本信息"""
+        """获取股票基本信息
+
+        【v9.1 改造】三级降级：
+        1. 全市场批量行情 spot 缓存（stock_zh_a_spot_em） → 拿到全量字段（名称/市值/PE/市净率/换手率/量比）
+        2. 代码+名称表缓存（stock_info_a_code_name，非东财源） → 只填 name，但绝不失败
+        3. 单只接口（stock_individual_info_em） → 最后兜底（东财拒的时候也会挂，但试一次）
+
+        理由：东财 push2 子域今天大面积拒连，spot 批量也可能挂。用 code_name 兜名称字段，
+        市值/PE 等字段缺失时下游 screener 的 low_priority 分支会兜住，不会崩。
+        """
         if not self.is_available():
             raise DataSourceError("AKShare不可用")
 
+        symbol_clean = self._convert_code(symbol).split(".")[0].zfill(6)
+
+        # ========== 第 1 级：全市场 spot 批量缓存 ==========
+        spot = self._get_market_spot_cached()
+        if spot is not None and not spot.empty and '代码' in spot.columns:
+            matched = spot[spot['代码'] == symbol_clean]
+            if not matched.empty:
+                row = matched.iloc[0]
+
+                def _fmt_cap(val):
+                    try:
+                        v = float(val)
+                        if v > 0:
+                            return f"{v / 1e8:.2f}亿"
+                    except (TypeError, ValueError):
+                        pass
+                    return ""
+
+                info = {
+                    '股票简称': str(row.get('名称', '')),
+                    '股票名称': str(row.get('名称', '')),
+                    '名称': str(row.get('名称', '')),
+                    'name': str(row.get('名称', '')),
+                    '代码': symbol_clean,
+                    '最新价': row.get('最新价'),
+                    '总市值': _fmt_cap(row.get('总市值')),
+                    '流通市值': _fmt_cap(row.get('流通市值')),
+                    '市盈率': row.get('市盈率-动态'),
+                    '市净率': row.get('市净率'),
+                    '换手率': row.get('换手率'),
+                    '量比': row.get('量比'),
+                }
+                return {k: v for k, v in info.items() if v not in (None, '', 'nan')}
+
+        # ========== 第 2 级：代码+名称表兜底（非东财源）==========
+        names = self._get_code_name_cached()
+        if names is not None and not names.empty:
+            matched = names[names['code'] == symbol_clean]
+            if not matched.empty:
+                name = str(matched.iloc[0].get('name', ''))
+                if name:
+                    logger.debug(f"{symbol_clean}: spot 未命中，用 code_name 兜底（仅名称）")
+                    return {
+                        '股票简称': name,
+                        '股票名称': name,
+                        '名称': name,
+                        'name': name,
+                        '代码': symbol_clean,
+                    }
+
+        # ========== 第 3 级：单只接口（最后兜底，东财拒的时候也会挂）==========
+        # 如果 spot 正在冷却期（说明东财 push2 整条线都拒了），单只接口大概率也失败，
+        # 跳过它避免每只股票再浪费 7s 重试，直接返回空 dict 让 screener 走 low_priority 分支
+        if self._market_spot_failed_at is not None:
+            now = datetime.now()
+            if (now - self._market_spot_failed_at).total_seconds() < self._market_spot_cooldown:
+                logger.debug(f"{symbol_clean}: spot 冷却中，跳过单只接口兜底")
+                return {}
+
         try:
-            symbol = self._convert_code(symbol)
-            df = self.api.stock_individual_info_em(symbol=symbol.split(".")[0])
+            logger.debug(f"{symbol_clean}: 两级缓存都未命中，调单只接口兜底")
+            df = self.api.stock_individual_info_em(symbol=symbol_clean)
             info = dict(zip(df['item'], df['value']))
             return info
         except Exception as e:
-            logger.error(f"AKShare info失败: {e}")
-            raise DataSourceError(f"AKShare API错误: {e}")
+            logger.debug(f"AKShare info 全部失败 {symbol}: {e}")
+            # 下游已经做了 "if not info: low_priority" 的降级处理（screener.py:775），
+            # 返回空 dict 比抛异常更友好，不会让整个批次崩
+            return {}
 
     def get_market_board(self) -> pd.DataFrame:
         """获取板块/概念行情"""
@@ -394,8 +604,7 @@ class DataFetcher:
             return self._moneyflow_rank_cache
 
         try:
-            import akshare as ak
-            df = ak.stock_individual_fund_flow_rank(indicator='今日')
+            df = self._ak_moneyflow_rank()
             if df is not None and not df.empty:
                 self._moneyflow_rank_cache = df
                 self._moneyflow_rank_cache_time = now
@@ -403,6 +612,13 @@ class DataFetcher:
         except Exception as e:
             logger.debug(f"AKShare全市场资金流向获取失败: {e}")
         return self._moneyflow_rank_cache
+
+    @staticmethod
+    @akshare_retry
+    def _ak_moneyflow_rank() -> Optional[pd.DataFrame]:
+        """AKShare 全市场资金流向排名（带网络重试）"""
+        import akshare as ak
+        return ak.stock_individual_fund_flow_rank(indicator='今日')
 
     def _get_yjyg_cached(self) -> Optional[pd.DataFrame]:
         """获取全市场业绩预告（批量缓存，1天有效期）"""
@@ -413,7 +629,6 @@ class DataFetcher:
             return self._yjyg_cache
 
         try:
-            import akshare as ak
             quarter_ends = ['0331', '0630', '0930', '1231']
             latest_quarter = None
             for qe in quarter_ends:
@@ -423,7 +638,7 @@ class DataFetcher:
             if latest_quarter is None:
                 latest_quarter = f"{now.year - 1}1231"
 
-            df = ak.stock_yjyg_em(date=latest_quarter)
+            df = self._ak_yjyg(latest_quarter)
             if df is not None and not df.empty:
                 self._yjyg_cache = df
                 self._yjyg_cache_time = now
@@ -431,6 +646,13 @@ class DataFetcher:
         except Exception as e:
             logger.debug(f"AKShare业绩预告获取失败: {e}")
         return self._yjyg_cache
+
+    @staticmethod
+    @akshare_retry
+    def _ak_yjyg(quarter_date: str) -> Optional[pd.DataFrame]:
+        """AKShare 业绩预告（带网络重试）"""
+        import akshare as ak
+        return ak.stock_yjyg_em(date=quarter_date)
 
     def get_daily(
         self,
@@ -946,8 +1168,10 @@ class DataFetcher:
         try:
             news_fetcher = get_news_fetcher()
             if news_fetcher.is_available():
-                df_news = news_fetcher.get_individual_news(symbol, limit=10)
+                df_news = news_fetcher.get_stock_news(symbol)
                 if df_news is not None and not df_news.empty:
+                    # 【v9.0 修复】只看最近 10 条，避免太旧的新闻拉高 has_policy 命中率
+                    df_news = df_news.head(10)
                     policy_keywords = ['政策', '补贴', '扶持', '支持', '规划', '利好', '获批', '签约', '中标']
                     text_col = '内容' if '内容' in df_news.columns else ('content' if 'content' in df_news.columns else None)
                     if text_col:
@@ -1331,13 +1555,18 @@ class NewsFetcher:
                     '公告标题': 'title',
                     '地址': 'url'
                 }
-                df = df.rename(columns=rename_map)
+                # 【v9.1】只重命名实际存在的列，新版 AKShare 列名变了也不崩
+                existing_cols = {k: v for k, v in rename_map.items() if k in df.columns}
+                if existing_cols:
+                    df = df.rename(columns=existing_cols)
                 df = df.head(limit)
                 self.cache.set(cache_key, df)
                 logger.info(f"获取公告 {len(df)} 条")
                 return df
         except Exception as e:
-            logger.error(f"获取公告失败: {e}")
+            # 【v9.1】AKShare 1.18.60 升级后 stock_notice_report 内部会抛 KeyError('代码')
+            # 这不影响主流程（外层已捕获），降为 debug 避免日志刷屏
+            logger.debug(f"获取公告失败: {e}")
 
         return pd.DataFrame()
 

@@ -8,6 +8,13 @@ import logging
 from pathlib import Path
 from datetime import datetime
 
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except AttributeError:
+        pass
+
 # 设置日志
 logging.basicConfig(
     level=logging.INFO,
@@ -19,7 +26,7 @@ def main():
     sys.path.insert(0, str(Path(__file__).parent))
 
     from screener import get_screener
-    from data_fetcher import get_fetcher
+    from data_fetcher import get_fetcher, DataQualityError
     from selection_tracker import get_tracker
 
     print("="*60)
@@ -87,6 +94,17 @@ def main():
 
         else:
             print("\n未筛选出符合条件的股票")
+
+    except DataQualityError as e:
+        # 【v9.1】数据层大面积失败时的人类可读报错，退出码 2 区别于普通错误
+        print(f"\n❌ 选股中止：{e}")
+        print("\n建议排查顺序：")
+        print("  1. 检查网络：能否访问 push2.eastmoney.com / api.tushare.pro")
+        print("  2. 跑 `python tools/check_tushare.py` 看 Tushare 是否可作为备选数据源")
+        print("  3. 稍后重试（可能只是临时抖动，重试装饰器已覆盖）")
+        print("  4. 如果反复失败，考虑手动改 config.py:47 的 DATA_SOURCE_PRIORITY")
+        logging.error(f"DataQualityError: {e}")
+        sys.exit(2)
 
     except Exception as e:
         logging.error(f"自动选股失败: {e}")
