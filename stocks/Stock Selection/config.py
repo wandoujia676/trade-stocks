@@ -41,10 +41,11 @@ TUSHARE_TOKEN = os.getenv("TUSHARE_TOKEN", "f44ca4afe1b57594c870c3f7048a0f0464e4
 TUSHARE_BASE_URL = "http://api.tushare.pro"
 
 # ==================== 数据源优先级 ====================
-# 【v9.0 Step 3b 修复】AKShare 优先（无积分限制），Tushare 备用
-# 原因：Tushare 免费版历史日线需要 2000+ 积分，低积分账户拉不到 2 年前数据
-# AKShare 虽然有时不稳定，但免费无限制，适合回测场景
-DATA_SOURCE_PRIORITY = ["akshare", "tushare"]
+# 【v9.1 Step 4】Tushare 优先（稳定秒出），AKShare 兜底
+# 背景：东财集中反爬期间 AKShare 每只股票白等 4-5s 才切 Tushare，100 只 ~10 分钟。
+# 实测 Tushare 个股日线 0.2s/只，token 积分足够；反转优先级后选股瞬时出结果。
+# AKShare 仍保留在回测/历史数据等 Tushare 积分不够的场景兜底。
+DATA_SOURCE_PRIORITY = ["tushare", "akshare"]
 
 # ==================== 选股默认参数 ====================
 SCREENER_DEFAULTS = {

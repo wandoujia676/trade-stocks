@@ -26,6 +26,59 @@ class DataSourceError(Exception):
     pass
 
 
+# 【v9.1 Step 4】指数代码映射：symbol(无后缀) → Tushare ts_code(带市场后缀)
+# 股票 daily 和指数 index_daily 是两个接口，指数走这张表路由。
+# 注意：000001 在股票（平安银行 .SZ）和指数（上证 .SH）里都存在，无后缀时按个股优先；
+# 想拉上证指数必须用 "000001.SH"。其他指数代码股票里无冲突，无后缀也可识别。
+INDEX_CODE_MAP = {
+    "000001.SH": "000001.SH",   # 上证指数（必须带后缀）
+    "000300": "000300.SH",      # 沪深300
+    "000905": "000905.SH",      # 中证500
+    "000906": "000906.SH",      # 中证800
+    "000016": "000016.SH",      # 上证50
+    "399001": "399001.SZ",      # 深证成指
+    "399006": "399006.SZ",      # 创业板指
+    "399005": "399005.SZ",      # 中小板指
+    "000688": "000688.SH",      # 科创50
+}
+
+# AKShare 新浪源指数符号（绕开东财反爬）
+AKSHARE_INDEX_SYMBOL = {
+    "000001.SH": "sh000001",
+    "000300.SH": "sh000300",
+    "000905.SH": "sh000905",
+    "000906.SH": "sh000906",
+    "000016.SH": "sh000016",
+    "399001.SZ": "sz399001",
+    "399006.SZ": "sz399006",
+    "399005.SZ": "sz399005",
+    "000688.SH": "sh000688",
+}
+
+
+def is_index_code(symbol: str) -> bool:
+    """判断 symbol 是否为指数代码。
+    - 带后缀（如 000001.SH）：在 INDEX_CODE_MAP values 中算指数
+    - 无后缀：在 INDEX_CODE_MAP keys 中且 key 不带后缀才算（消歧 000001）
+    """
+    if not symbol:
+        return False
+    s = symbol.strip().upper()
+    if "." in s:
+        return s in INDEX_CODE_MAP.values()
+    # 无后缀：必须在 keys 里且 key 也不含后缀
+    return s in INDEX_CODE_MAP and "." not in s
+
+
+def to_index_ts_code(symbol: str) -> str:
+    """无后缀 symbol → 完整 ts_code（含市场后缀）"""
+    s = symbol.strip().upper()
+    if "." in s:
+        return s
+    return INDEX_CODE_MAP.get(s, s)
+
+
+
 class DataQualityError(Exception):
     """数据质量异常：失败率超阈值，不是真的没数据而是数据层大面积失败"""
     pass
@@ -184,6 +237,23 @@ class TushareFetcher:
             return df
         except Exception as e:
             logger.error(f"Tushare get_daily失败: {e}")
+            raise DataSourceError(f"Tushare API错误: {e}")
+
+    def get_index_daily(self, ts_code: str, start_date: str = None, end_date: str = None) -> pd.DataFrame:
+        """【v9.1 Step 4】获取指数日线（走 pro.index_daily，与个股 pro.daily 是两个接口）"""
+        if not self.is_available():
+            raise DataSourceError("Tushare不可用")
+
+        try:
+            self._rate_limit()
+            df = self.pro.index_daily(
+                ts_code=ts_code,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            return df
+        except Exception as e:
+            logger.error(f"Tushare index_daily失败: {e}")
             raise DataSourceError(f"Tushare API错误: {e}")
 
     def get_realtime_quote(self, ts_codes: List[str]) -> pd.DataFrame:
@@ -373,6 +443,33 @@ class AKShareFetcher:
             return df
         except Exception as e:
             logger.error(f"AKShare daily失败: {e}")
+            raise DataSourceError(f"AKShare API错误: {e}")
+
+    @akshare_retry
+    def get_index_daily(self, symbol_ak: str, start_date: str = None, end_date: str = None) -> pd.DataFrame:
+        """【v9.1 Step 4】获取指数日线（AKShare 新浪源，避开东财反爬）
+        symbol_ak: 形如 'sh000300' / 'sz399001'，由调用方通过 AKSHARE_INDEX_SYMBOL 映射得到
+        start_date/end_date: 形如 '20260101'
+        """
+        if not self.is_available():
+            raise DataSourceError("AKShare不可用")
+
+        try:
+            df = self.api.stock_zh_index_daily(symbol=symbol_ak)
+            if df is None or df.empty:
+                return df
+            # 过滤日期范围（sina 接口返回全历史）
+            if start_date or end_date:
+                df = df.copy()
+                df['date'] = pd.to_datetime(df['date'])
+                if start_date:
+                    df = df[df['date'] >= pd.to_datetime(start_date)]
+                if end_date:
+                    df = df[df['date'] <= pd.to_datetime(end_date)]
+                df = df.reset_index(drop=True)
+            return df
+        except Exception as e:
+            logger.error(f"AKShare index_daily失败: {e}")
             raise DataSourceError(f"AKShare API错误: {e}")
 
     @akshare_retry
@@ -679,6 +776,9 @@ class DataFetcher:
             if cached is not None and not cached.empty:
                 return cached
 
+        # 【v9.1 Step 4】指数代码走 index_daily 接口（与个股 daily 是两个接口）
+        is_index = is_index_code(symbol)
+
         # 尝试各数据源
         errors = []
         for source_name in DATA_SOURCE_PRIORITY:
@@ -688,11 +788,19 @@ class DataFetcher:
 
             try:
                 if source_name == "tushare":
-                    df = fetcher.get_daily(
-                        ts_code=self._to_tushare_code(symbol),
-                        start_date=start_date,
-                        end_date=end_date
-                    )
+                    if is_index:
+                        ts_code = to_index_ts_code(symbol)
+                        df = fetcher.get_index_daily(
+                            ts_code=ts_code,
+                            start_date=start_date,
+                            end_date=end_date,
+                        )
+                    else:
+                        df = fetcher.get_daily(
+                            ts_code=self._to_tushare_code(symbol),
+                            start_date=start_date,
+                            end_date=end_date
+                        )
                     if df is not None and not df.empty:
                         # 统一列名
                         df = self._normalize_daily_df(df, source_name)
@@ -705,7 +813,15 @@ class DataFetcher:
                         return df
 
                 elif source_name == "akshare":
-                    df = fetcher.get_daily(symbol, start_date, end_date)
+                    if is_index:
+                        # 【v9.1 Step 4】指数走 AKShare 新浪源（绕开东财反爬）
+                        ts_code = to_index_ts_code(symbol)
+                        ak_sym = AKSHARE_INDEX_SYMBOL.get(ts_code)
+                        if not ak_sym:
+                            continue
+                        df = fetcher.get_index_daily(ak_sym, start_date, end_date)
+                    else:
+                        df = fetcher.get_daily(symbol, start_date, end_date)
                     if df is not None and not df.empty:
                         # 统一列名
                         df = self._normalize_daily_df(df, source_name)
@@ -1224,8 +1340,14 @@ class DataFetcher:
                 "换手率": "turnover_rate",
                 "涨跌幅": "pct_change",
                 "涨跌额": "change",
+                # 【v9.1 Step 4】新浪指数接口英文列
+                "date": "trade_date",
             }
             df = df.rename(columns=rename_map)
+            # 【v9.1 Step 4】指数接口没 pct_change，从 close 算一个
+            if "pct_change" not in df.columns and "close" in df.columns and len(df) > 1:
+                df = df.copy()
+                df["pct_change"] = df["close"].astype(float).pct_change() * 100
 
         elif source == "baostock":
             rename_map = {
