@@ -426,7 +426,7 @@ class MonthlyGenerator:
                      for _, row in basic_filtered.iterrows()]
 
         logger.info(f"获取 {len(ts_codes)} 只股票的日线数据...")
-        daily_data = self.get_daily_batched(ts_codes, days=45)
+        daily_data = self.get_daily_batched(ts_codes, days=60)
 
         # 步骤3: 第二轮过滤 - 技术面评分
         # 双轨筛选：右侧追涨 + 左侧潜伏
