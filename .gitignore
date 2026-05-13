@@ -23,6 +23,8 @@ env/
 
 # Claude
 .claude/
+MEMORY.md
+memory/
 
 # Temp/accidental files
 stocks/=0.8.8

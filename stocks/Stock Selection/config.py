@@ -2,6 +2,26 @@
 股票分析系统配置文件
 """
 import os
+
+# ==================== 【v9.1】金融数据域名强制直连 ====================
+# 问题：Windows 系统代理（Clash/V2Ray等）拦截东财接口导致 AKShare 失败
+# 方案：将金融数据域名加入 NO_PROXY，requests/akshare/tushare 会绕过系统代理直连
+# 注意：必须在 import requests/akshare/tushare 之前设置，本文件被所有入口最先导入
+_FINANCE_DIRECT_DOMAINS = [
+    "eastmoney.com",   # 东财（akshare 日线/实时/资金流后端）
+    "sinajs.cn",       # 新浪实时行情
+    "gtimg.cn",        # 腾讯实时行情
+    "tushare.pro",     # Tushare Pro API
+    "akshare.xyz",     # AKShare 元数据
+    "xueqiu.com",      # 雪球（akshare 部分接口备用）
+    "tdx.com.cn",      # 通达信（数据备用）
+]
+_existing = os.environ.get("NO_PROXY", "")
+_combined = ",".join(filter(None, [_existing] + _FINANCE_DIRECT_DOMAINS))
+os.environ["NO_PROXY"] = _combined
+os.environ["no_proxy"] = _combined  # 兼容小写变量
+# ====================================================================
+
 from pathlib import Path
 
 # 项目根目录
