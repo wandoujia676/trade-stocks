@@ -717,8 +717,23 @@ class DataFetcher:
         import akshare as ak
         return ak.stock_individual_fund_flow_rank(indicator='今日')
 
+    @staticmethod
+    @akshare_retry
+    def _ak_individual_fund_flow(stock: str, market: str) -> Optional[pd.DataFrame]:
+        """【v9.1 Step 5】AKShare 单股资金流向（批量排名接口挂时兜底）
+        stock: 如 '000001' / '600036'
+        market: 'sz' 或 'sh'
+        """
+        import akshare as ak
+        return ak.stock_individual_fund_flow(stock=stock, market=market)
+
     def _get_yjyg_cached(self) -> Optional[pd.DataFrame]:
-        """获取全市场业绩预告（批量缓存，1天有效期）"""
+        """获取全市场业绩预告（批量缓存，1天有效期）
+
+        【v9.1 Step 5】修复季度日期：只取 "<= now" 的最新季末会得到 4 行（当期预告还没批量
+        披露）。改为依次尝试最近 4 期季末，合并所有返回数据，再按股票代码取最新一条。
+        这样覆盖 Q1 披露期的跨季公告，也兜底去年 Q4 年报预告。
+        """
         now = datetime.now()
         if (self._yjyg_cache is not None
                 and self._yjyg_cache_time is not None
@@ -726,20 +741,41 @@ class DataFetcher:
             return self._yjyg_cache
 
         try:
-            quarter_ends = ['0331', '0630', '0930', '1231']
-            latest_quarter = None
-            for qe in quarter_ends:
-                date_str = f"{now.year}{qe}"
-                if datetime.strptime(date_str, "%Y%m%d") <= now:
-                    latest_quarter = date_str
-            if latest_quarter is None:
-                latest_quarter = f"{now.year - 1}1231"
+            # 生成最近 4 期季末日期（含未到的本季，AKShare 会返回已披露部分）
+            quarter_ends = [(3, 31), (6, 30), (9, 30), (12, 31)]
+            candidates: List[str] = []
+            y, m = now.year, now.month
+            # 从本季倒序 4 期
+            for qm, qd in reversed(quarter_ends):
+                candidates.append(f"{y}{qm:02d}{qd:02d}")
+            # 再加上一年的全部 4 期（凑够 4+4=8 候选，取数据最多那期及合并）
+            for qm, qd in reversed(quarter_ends):
+                candidates.append(f"{y - 1}{qm:02d}{qd:02d}")
+            # 去掉明显未来超过 3 个月的日期（不合理）
+            cutoff = now + timedelta(days=90)
+            candidates = [d for d in candidates if datetime.strptime(d, "%Y%m%d") <= cutoff]
 
-            df = self._ak_yjyg(latest_quarter)
-            if df is not None and not df.empty:
-                self._yjyg_cache = df
+            dfs: List[pd.DataFrame] = []
+            for q in candidates[:6]:  # 最多 6 期，防止过度请求
+                try:
+                    df = self._ak_yjyg(q)
+                    if df is not None and not df.empty:
+                        dfs.append(df)
+                        # 若已累计足够多行（有效性高）就停
+                        if sum(len(x) for x in dfs) >= 500:
+                            break
+                except Exception as e:
+                    logger.debug(f"AKShare yjyg {q} 获取失败: {e}")
+                    continue
+
+            if dfs:
+                merged = pd.concat(dfs, ignore_index=True)
+                # 同一股票保留最新一条（假设接口按 公告日/报告期 排序，取 drop_duplicates first）
+                if '股票代码' in merged.columns:
+                    merged = merged.drop_duplicates(subset=['股票代码'], keep='first')
+                self._yjyg_cache = merged
                 self._yjyg_cache_time = now
-                return df
+                return merged
         except Exception as e:
             logger.debug(f"AKShare业绩预告获取失败: {e}")
         return self._yjyg_cache
@@ -1073,6 +1109,22 @@ class DataFetcher:
                         '报告期': latest.get('报告期'),
                     }, 'akshare')
 
+                    # 【v9.1 Step 5】PE 回补：同花顺接口不含 PE，从 spot 批量缓存里取
+                    # （v9.1 已有该缓存，里面含市盈率-动态字段，5 分钟 TTL）
+                    if result.get('pe') is None:
+                        try:
+                            ak_fetcher = self.fetchers.get("akshare")
+                            if ak_fetcher and hasattr(ak_fetcher, "_get_market_spot_cached"):
+                                spot = ak_fetcher._get_market_spot_cached()
+                                if spot is not None and not spot.empty and '代码' in spot.columns:
+                                    matched = spot[spot['代码'] == symbol]
+                                    if not matched.empty:
+                                        pe_val = matched.iloc[0].get('市盈率-动态')
+                                        if pe_val is not None and pd.notna(pe_val):
+                                            result['pe'] = float(pe_val)
+                        except Exception as e:
+                            logger.debug(f"PE 从 spot 回补失败 {symbol}: {e}")
+
                     self.cache.set(cache_key, result)
                     self.current_source = 'akshare'
                     return result
@@ -1184,6 +1236,39 @@ class DataFetcher:
                         return result
             except Exception as e:
                 logger.debug(f"AKShare资金流向获取失败 {symbol}: {e}")
+
+            # 【v9.1 Step 5】单股级二次降级：排名接口挂/未命中时，调 stock_individual_fund_flow
+            # 该接口按股票返回 120 天资金流向日线，网络层活着（诊断 0.4s/只）
+            try:
+                market = 'sh' if symbol.startswith('6') else 'sz'
+                df_ind = self._ak_individual_fund_flow(stock=symbol, market=market)
+                if df_ind is not None and not df_ind.empty:
+                    # 接口返回升序（最老在前），取最后 days 天
+                    recent = df_ind.tail(days) if len(df_ind) >= days else df_ind
+                    main_col = '主力净流入-净额'
+                    super_col = '超大单净流入-净额'
+                    main_inflow = None
+                    super_inflow = None
+                    if main_col in recent.columns:
+                        vals = pd.to_numeric(recent[main_col], errors='coerce').dropna()
+                        # 单股接口返回单位是元，转万元
+                        main_inflow = float(vals.sum()) / 10000 if len(vals) > 0 else None
+                    if super_col in recent.columns:
+                        vals = pd.to_numeric(recent[super_col], errors='coerce').dropna()
+                        super_inflow = float(vals.sum()) / 10000 if len(vals) > 0 else None
+
+                    if main_inflow is not None:
+                        result = self._normalize_moneyflow_dict({
+                            'main_net_inflow': main_inflow,
+                            'super_net_inflow': super_inflow,
+                            'hk_hold_change': None,
+                            'margin_balance_change': None,
+                        }, 'akshare')
+                        self.cache.set(cache_key, result)
+                        self.current_source = 'akshare'
+                        return result
+            except Exception as e:
+                logger.debug(f"AKShare单股资金流向获取失败 {symbol}: {e}")
 
         logger.warning(f"无法获取 {symbol} 的资金流向，跳过资金面维度")
         return {}
