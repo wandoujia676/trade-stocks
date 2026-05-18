@@ -735,16 +735,21 @@ class StockScreener:
                     pre_score -= 5   # 【v8.3降低】跌幅过大，可能是接飞刀
 
                 # 5. 排除明显下跌趋势（20日均线空头）
-                if len(ma5) > 0 and len(ma20) > 0:
+                # 【v9.1 step6d】只对 right/未知 候选生效；left 候选的"均线空头+近期下跌"
+                # 恰恰是超跌反弹入场条件（参 warfare._evaluate_trend_left "均线蓄势/收敛"），
+                # 用右侧规则一刀切会把真正的左侧买点全刷掉（如 605599 / 002379 基本面优质
+                # 却被卡在这一关）。
+                track_map = getattr(self, "_candidate_track_map", {}) or {}
+                _track = track_map.get(code, "")
+                if _track != "left" and len(ma5) > 0 and len(ma20) > 0:
                     if ma5[-1] < ma20[-1] * 0.97:  # MA5明显低于MA20
                         if change_5d < -5:
                             continue  # 均线空头+近期下跌 = 明确下跌趋势，放弃
 
-                track_map = getattr(self, "_candidate_track_map", {}) or {}
                 passed.append({
                     "code": code,
                     "data": df,
-                    "track": track_map.get(code, ""),  # left / right / "" (未知)
+                    "track": _track,  # left / right / "" (未知)
                     "metrics": {
                         "5日涨幅": round(change_5d, 2),
                         "10日涨幅": round(change_10d, 2),
