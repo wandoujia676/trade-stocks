@@ -527,15 +527,38 @@ class StockScreener:
     def _get_candidate_pool(self, market: str) -> List[str]:
         """
         获取候选股票池
-        从 monthly_watchlist.txt 读取上月度候选股票（约100只）
+        优先从 monthly_candidate_pool.json 读取（带 筛选轨道 字段，供 v9.0 战法分发使用），
+        失败则降级到 monthly_watchlist.txt（仅代码，无轨道）。
         """
-        # 尝试从 monthly_watchlist.txt 读取
         base_dir = Path(__file__).parent
+        json_file = base_dir / "View Results" / "monthly_candidate_pool.json"
         monthly_file = base_dir / "View Results" / "monthly_watchlist.txt"
 
         codes = []
+        track_map: Dict[str, str] = {}
 
-        if monthly_file.exists():
+        if json_file.exists():
+            try:
+                import json as _json
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    data = _json.load(f)
+                for stock in data.get("股票列表", []):
+                    code = stock.get("code", "")
+                    if code and code.isdigit() and len(code) == 6:
+                        codes.append(code)
+                        track = stock.get("筛选轨道", "")
+                        if track in ("left", "right"):
+                            track_map[code] = track
+                logger.info(
+                    f"从 monthly_candidate_pool.json 读取到 {len(codes)} 只股票 "
+                    f"(left={sum(1 for v in track_map.values() if v=='left')}, "
+                    f"right={sum(1 for v in track_map.values() if v=='right')})"
+                )
+            except Exception as e:
+                logger.warning(f"读取 monthly_candidate_pool.json 失败: {e}")
+                codes = []
+
+        if not codes and monthly_file.exists():
             try:
                 with open(monthly_file, 'r', encoding='utf-8') as f:
                     for line in f:
@@ -548,7 +571,7 @@ class StockScreener:
                                 # 过滤非股票代码行
                                 if code and code.isdigit() and len(code) == 6:
                                     codes.append(code)
-                logger.info(f"从 monthly_watchlist.txt 读取到 {len(codes)} 只股票")
+                logger.info(f"从 monthly_watchlist.txt 读取到 {len(codes)} 只股票（无轨道信息）")
             except Exception as e:
                 logger.warning(f"读取 monthly_watchlist.txt 失败: {e}")
 
@@ -578,6 +601,9 @@ class StockScreener:
                 # 互联网
                 "300059", "300024", "603259",
             ]
+
+        # 持久化 track_map 供后续 _filter_technical / _score_stocks 使用
+        self._candidate_track_map = track_map
 
         # 根据市场筛选
         if market == "创业板":
@@ -714,9 +740,11 @@ class StockScreener:
                         if change_5d < -5:
                             continue  # 均线空头+近期下跌 = 明确下跌趋势，放弃
 
+                track_map = getattr(self, "_candidate_track_map", {}) or {}
                 passed.append({
                     "code": code,
                     "data": df,
+                    "track": track_map.get(code, ""),  # left / right / "" (未知)
                     "metrics": {
                         "5日涨幅": round(change_5d, 2),
                         "10日涨幅": round(change_10d, 2),
@@ -870,12 +898,40 @@ class StockScreener:
         """
         多因素评分（使用综合战法 + 动量加权 + 消息面情绪）
 
-        优化：加入动量加权，让近期涨幅大的股票更容易被选出
-        新增：整合消息面情绪分析
+        v9.0 架构修复（2026-05-18）：
+        - 层2：批量预取基本面/资金面/催化剂数据，通过 info 注入 warfare.evaluate
+        - 层3：按候选 track 字段分发战法模式（left → 左侧12维 / right → 波段7维）
         """
         warfare = get_warfare()
         news_fetcher = get_news_fetcher()
         news_available = news_fetcher.is_available()
+
+        # 【v9.0 层2】批量预取三维度数据（仅对 left 候选；right 战法不消费这些字段）
+        left_codes = [c["code"] for c in candidates if c.get("track") == "left"]
+        fundamental_cache: Dict[str, Any] = {}
+        moneyflow_cache: Dict[str, Any] = {}
+        catalyst_cache: Dict[str, Any] = {}
+
+        if left_codes:
+            print(f"\n步骤3.5: 批量预取基本面/资金面/催化剂数据（{len(left_codes)} 只 left 候选）")
+            for code in left_codes:
+                try:
+                    fundamental_cache[code] = self.fetcher.get_financial_indicators(code)
+                except Exception as e:
+                    logger.debug(f"基本面预取失败 {code}: {e}")
+                try:
+                    moneyflow_cache[code] = self.fetcher.get_moneyflow(code, days=5)
+                except Exception as e:
+                    logger.debug(f"资金面预取失败 {code}: {e}")
+                try:
+                    catalyst_cache[code] = self.fetcher.get_catalysts(code)
+                except Exception as e:
+                    logger.debug(f"催化剂预取失败 {code}: {e}")
+            logger.info(
+                f"v9.0 Step 2 预取: 基本面 {sum(1 for v in fundamental_cache.values() if v)} 只 / "
+                f"资金面 {sum(1 for v in moneyflow_cache.values() if v)} 只 / "
+                f"催化剂 {sum(1 for v in catalyst_cache.values() if v)} 只"
+            )
 
         scored = []
         for item in candidates:
@@ -889,8 +945,25 @@ class StockScreener:
                 if volume_ratio < 1.3:
                     continue
 
+                code = item.get("code", "")
+                track = item.get("track", "")
+
+                # 【v9.0 层3】按 track 分发战法模式
+                # left → 12维含三新维度  right → 7维主升浪  未知 → 默认 wave
+                mode = "left" if track == "left" else "wave"
+
+                # 【v9.0 层2】构造 info 注入三维度数据
+                info: Dict[str, Any] = {"code": code}
+                if mode == "left":
+                    if code in fundamental_cache:
+                        info["_fundamentals"] = fundamental_cache[code]
+                    if code in moneyflow_cache:
+                        info["_moneyflow"] = moneyflow_cache[code]
+                    if code in catalyst_cache:
+                        info["_catalysts"] = catalyst_cache[code]
+
                 # 使用综合战法评估
-                warfare_result = warfare.evaluate(df)
+                warfare_result = warfare.evaluate(df, info=info, mode=mode)
 
                 if "error" in warfare_result:
                     continue
