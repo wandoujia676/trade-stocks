@@ -1040,13 +1040,17 @@ class StockScreener:
                 item["情绪关键词"] = sentiment_keywords
                 item["风险关键词"] = risk_keywords
                 item["评级"] = composite.get("评级", "B")
-                item["趋势分"] = warfare_result.get("趋势", {}).get("评分", 50)
-                item["动量分"] = warfare_result.get("动量", {}).get("评分", 50)
-                item["左侧分"] = warfare_result.get("左侧", {}).get("评分", 50)
-                item["量价分"] = warfare_result.get("量价", {}).get("评分", 50)
-                item["形态分"] = warfare_result.get("形态", {}).get("评分", 50)
-                item["位置分"] = warfare_result.get("位置", {}).get("评分", 50)
-                item["情绪分"] = warfare_result.get("情绪", {}).get("评分", 50)
+                # 【v9.1 step6c】保留全部维度分数（按 mode 完整记录，便于诊断）
+                # 缺失维度（mode 不匹配）记 None 而非 50，避免误判
+                _all_dims = [
+                    "趋势", "动量", "左侧", "量价", "形态", "位置", "情绪",  # 共有/老 7 维
+                    "量在价先", "热点消息", "基本面", "资金面", "催化剂",     # left 专属
+                    "突破",                                                   # wave 专属
+                ]
+                for _dim in _all_dims:
+                    _v = warfare_result.get(_dim)
+                    item[f"{_dim}分"] = _v.get("评分") if isinstance(_v, dict) else None
+                item["战法模式"] = warfare_result.get("战法模式", mode)
 
                 # 信号
                 item["信号"] = signal.get("操作", "持有")
