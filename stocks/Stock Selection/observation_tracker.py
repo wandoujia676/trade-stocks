@@ -96,7 +96,10 @@ class ObservationTracker:
 
                 # 过滤出 start_date 之后的日期
                 future_dates = [d for d in trade_dates if d > start_date]
-                return future_dates[:count]
+                if future_dates:
+                    return future_dates[:count]
+                # future_dates 为空（如查询日期落在 fetcher 数据范围之外）
+                # 不 return，坠入下面的"跳过周末"降级方案
 
         except Exception as e:
             logger.warning(f"获取交易日历失败: {e}，使用简单日期推算")

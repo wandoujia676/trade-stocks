@@ -507,6 +507,11 @@ class StockScreener:
         # 步骤5: 多因素评分
         scored = self._score_stocks(sentiment_passed)
 
+        # 【v9.1 step6e】观察池接入：在步骤6 白名单过滤前调用，
+        # 把"分数够但信号被降级（观望/持有/观察）"的左侧候选送进观察池
+        # 等 T+1~T+3 右侧确认。否则这部分会被步骤6 白名单全部丢弃。
+        self._auto_add_to_observation_pool(scored)
+
         # 步骤6: 只保留加仓/买入信号（过滤减仓/观望）
         # 使用包含判断，因为信号可能是"持有/加仓"混合信号
         scored = [s for s in scored if "加仓" in s.get("信号", "") or "买入" in s.get("信号", "") or "强烈推荐" in s.get("信号", "")]
@@ -1337,13 +1342,18 @@ class StockScreener:
         """
         【v9.0新增】自动将左侧强信号股票加入观察池
 
-        规则：
-        - 左侧维度评分 >= 60 分（强左侧信号）
-        - 总分 >= 55 分（避免垃圾股）
-        - 自动入池，等待次日 T+1~T+3 右侧确认
+        规则（v9.1 step6e 扩展）：
+        A. 老规则（左侧强信号）：左侧维度评分 ≥ 60 + 总分 ≥ 55
+        B. 新规则（信号被降级但分数接近主攻线）：
+           track == 'left' + 总分 ≥ 55 + 信号含"观望/持有/观察"关键词
+           覆盖如 002159 (64.3/"观望（追高风险）") 这类被步骤6 白名单拦下的目标
+
+        字段兼容：盘中（_screen_realtime）用"代码"/"左侧"等中文字段，盘后
+        （_screen_full → _score_stocks）用"code"/"左侧分"等。两套都支持。
 
         Args:
-            scored: 已评分的股票列表
+            scored: 已评分的股票列表（必须在步骤6 信号过滤之前调用，否则
+                    "观望"等候选已被剔除）
         """
         try:
             from observation_tracker import get_observation_tracker
@@ -1354,30 +1364,57 @@ class StockScreener:
 
             added_count = 0
             for stock in scored:
-                # 检查左侧维度评分
-                left_score = stock.get("左侧", 0)
-                total_score = stock.get("总分", 0)
+                # 字段兼容：盘中/盘后两套命名
+                code = stock.get("代码") or stock.get("code", "")
+                if not code:
+                    continue
+                name = stock.get("名称") or stock.get("name", "")
+                if not name:
+                    # 盘后路径 _score_stocks 不带名称，走统一名称获取
+                    try:
+                        from selection_tracker import _get_stock_name
+                        name = _get_stock_name(code) or code
+                    except Exception:
+                        name = code
+                left_score = stock.get("左侧") if stock.get("左侧") is not None else stock.get("左侧分", 0) or 0
+                total_score = stock.get("总分", 0) or 0
+                price = stock.get("最新价", 0) or 0
+                signal_text = stock.get("信号", "") or ""
+                track = stock.get("track", "")
 
-                # 左侧强信号 + 总分达标
-                if left_score >= 60 and total_score >= 55:
-                    code = stock.get("代码", "")
-                    name = stock.get("名称", "")
-                    price = stock.get("最新价", 0)
-                    signal = f"左侧{left_score}分 | {stock.get('信号', '')}"
+                # 规则 A：左侧强信号
+                rule_a = (left_score >= 60) and (total_score >= 55)
+                # 规则 B：left 候选 + 总分够 + 信号被降级
+                downgrade_keywords = ("观望", "持有", "观察")
+                rule_b = (
+                    track == "left"
+                    and total_score >= 55
+                    and any(k in signal_text for k in downgrade_keywords)
+                )
 
-                    # 尝试加入观察池
-                    success = tracker.add(
-                        stock_code=code,
-                        stock_name=name,
-                        entry_signal=signal,
-                        entry_price=price,
-                        entry_score=total_score,
-                        entry_date=today
+                if not (rule_a or rule_b):
+                    continue
+
+                rule_tag = "A" if rule_a else "B"
+                entry_signal = (
+                    f"[规则{rule_tag}] 左侧{left_score}分 总分{total_score:.1f} | {signal_text}"
+                )
+
+                success = tracker.add(
+                    stock_code=code,
+                    stock_name=name,
+                    entry_signal=entry_signal,
+                    entry_price=price,
+                    entry_score=total_score,
+                    entry_date=today
+                )
+
+                if success:
+                    added_count += 1
+                    logger.info(
+                        f"✅ {code} {name} 自动入观察池"
+                        f"（规则{rule_tag} 左侧{left_score} 总分{total_score:.1f}）"
                     )
-
-                    if success:
-                        added_count += 1
-                        logger.info(f"✅ {code} {name} 自动入观察池（左侧{left_score}分）")
 
             if added_count > 0:
                 logger.info(f"本次筛选共 {added_count} 只股票自动入观察池")
